@@ -1,34 +1,16 @@
 import { MarkdownView, Notice, Plugin, TFile } from "obsidian";
 import { BubbleGate } from "./bubble-gate";
 import { FOCUS_EVENT, focusReaction, focusingFromSnapshot } from "./focus";
-import { MAX_DROP_CHARS, PressedSelection, PulseMemoApi, canCapture, memoRequest, normalizeDrop, resolveDrop } from "./memo-drop";
+import { DragSession, MAX_DROP_CHARS, PulseMemoApi, canCapture, memoRequest, normalizeDrop } from "./memo-drop";
+import { displayedOffset } from "./layout";
 import { PetMood } from "./mood";
 import { PetOverlay } from "./overlay";
 import { PULSE_STATE_EVENT, PulseStateApi, PulseToday, canReadToday, parseToday, pulseReactions } from "./pulse";
 import { FocusSnapshot, PanelModel, focusCard, pulseTiles, shortcuts } from "./panel-model";
 import { PetEntry, listPets, loadSpritesheet, readCodexSelection, resolvePetsFolder } from "./pets";
+import { DEFAULT_SETTINGS, PetSettings, sanitizeSettings } from "./settings";
 import { PetSettingTab } from "./settings-tab";
 import { PetSprite } from "./sprite";
-
-export interface PetSettings {
-  visible: boolean;
-  petsFolder: string;
-  followCodex: boolean; // show whichever local pet Codex has selected
-  petId: string; // pet folder name, used when not following Codex or Codex has no local pet selected
-  size: number; // percent of the 192x208 cell
-  offset: { right: number; bottom: number };
-  memoNudgedOn: string; // date the evening "memos without a destination" line was last shown
-}
-
-const DEFAULT_SETTINGS: PetSettings = {
-  visible: true,
-  petsFolder: "",
-  followCodex: true,
-  petId: "",
-  size: 50,
-  offset: { right: 24, bottom: 40 },
-  memoNudgedOn: "",
-};
 
 const DRAG_THRESHOLD_PX = 4;
 const FAILED_COOLDOWN_MS = 10000;
@@ -52,7 +34,8 @@ export default class CrispPetsPlugin extends Plugin {
   private pulseToday: PulseToday | null = null;
   private pulseTimer: number | null = null;
   private pulseToken = 0;
-  private pressedSelection: PressedSelection | null = null;
+  private dragSession = new DragSession();
+  private disposed = false;
   private sheetUrl: string | null = null;
   private mood: PetMood | null = null;
   private doneTasks = new Map<string, number>();
@@ -61,8 +44,7 @@ export default class CrispPetsPlugin extends Plugin {
   private mountToken = 0;
 
   async onload(): Promise<void> {
-    const stored = (await this.loadData()) as Partial<PetSettings> | null;
-    this.options = { ...DEFAULT_SETTINGS, ...stored, offset: { ...DEFAULT_SETTINGS.offset, ...stored?.offset } };
+    this.options = sanitizeSettings(await this.loadData());
     this.addSettingTab(new PetSettingTab(this.app, this));
 
     this.addCommand({
@@ -75,6 +57,7 @@ export default class CrispPetsPlugin extends Plugin {
       },
     });
     this.addCommand({ id: "reload-pets", name: "Reload pets from disk", callback: () => this.mount() });
+    this.addCommand({ id: "open-panel", name: "Open pet panel", callback: () => this.togglePanel(true) });
 
     // editor-change also fires when a note loads or switches mode, so only count real input in an editor.
     this.registerDomEvent(document, "beforeinput", (event) => {
@@ -82,32 +65,57 @@ export default class CrispPetsPlugin extends Plugin {
         this.nudge((mood, now) => mood.typed(now));
       }
     });
-    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.syncReading()));
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => {
+        this.syncReading();
+        this.seedTasks();
+      }),
+    );
     this.registerEvent(this.app.workspace.on("layout-change", () => this.syncReading()));
     this.registerEvent(this.app.metadataCache.on("changed", (file, _data, cache) => this.checkTasks(file, cache.listItems)));
     this.registerEvent(this.app.workspace.on(FOCUS_EVENT as "quit", (event: unknown) => this.onFocusEvent(event)));
     this.registerDomEvent(window, "error", () => this.onFailure());
     this.registerDomEvent(window, "unhandledrejection", () => this.onFailure());
     this.registerDomEvent(document, "pointermove", (event) => this.onPointer(event));
-    this.registerDomEvent(window, "resize", () => this.applyPosition());
+    this.registerDomEvent(window, "resize", () => {
+      this.applyPosition();
+      this.overlay?.reposition();
+    });
+    // No animation while the window is hidden; the pose is recomputed on return.
+    this.registerDomEvent(document, "visibilitychange", () => {
+      if (document.hidden) this.sprite?.stop();
+      else this.sprite?.start();
+    });
     // Codex may switch pets while Obsidian is in the background.
     this.registerDomEvent(window, "focus", () => void this.followCodexChange());
     this.registerDomEvent(document, "pointerdown", (event) => {
       if (this.overlay?.panelOpen && !this.overlay.contains(event.target)) this.overlay.closePanel();
     });
-    // Remember the editor selection a drag starts from; see resolveDrop.
+    // Remember the editor selection a drag starts from; see DragSession.
     this.registerDomEvent(document, "pointerdown", (event) => this.rememberSelection(event), { capture: true });
+    this.registerDomEvent(document, "dragstart", (event) => this.dragSession.dragStart(inEditor(event.target), Date.now()), { capture: true });
+    this.registerDomEvent(document, "dragend", () => this.dragSession.end());
     this.registerDomEvent(document, "keydown", (event) => {
-      if (event.key === "Escape" && this.overlay?.panelOpen) this.overlay.closePanel();
+      if (event.key !== "Escape" || !this.overlay?.panelOpen) return;
+      const hadFocus = this.overlay.contains(document.activeElement);
+      this.overlay.closePanel();
+      if (hadFocus) this.spriteEl?.focus();
     });
     this.registerInterval(window.setInterval(() => this.refreshPanel(), PANEL_REFRESH_MS));
     this.registerEvent(this.app.workspace.on(PULSE_STATE_EVENT as "quit", () => this.schedulePulseRefresh()));
     this.registerInterval(window.setInterval(() => void this.refreshPulse(), PULSE_POLL_MS));
 
-    this.app.workspace.onLayoutReady(() => void this.mount());
+    this.app.workspace.onLayoutReady(() => {
+      this.seedTasks();
+      void this.mount();
+    });
   }
 
   onunload(): void {
+    // Anything still loading (pets folder, spritesheet, Pulse) must not come back after this.
+    this.disposed = true;
+    this.mountToken++;
+    this.pulseToken++;
     if (this.pulseTimer !== null) window.clearTimeout(this.pulseTimer);
     this.unmount();
   }
@@ -116,37 +124,54 @@ export default class CrispPetsPlugin extends Plugin {
     await this.saveData(this.options);
   }
 
+  // Loads the chosen pet first and swaps it in only when it is ready, so a broken spritesheet keeps the
+  // current pet on screen. A newer mount or unloading the plugin discards a load still in flight.
   async mount(): Promise<void> {
+    if (this.disposed) return;
     const token = ++this.mountToken;
-    this.unmount();
-    this.shownPet = null;
     await this.scanPets();
-    if (token !== this.mountToken || !this.options.visible) return;
-    const entry = this.chosenPet();
-    if (!entry?.manifest) return;
+    if (token !== this.mountToken || this.disposed) return;
+    const entry = this.options.visible ? this.chosenPet() : undefined;
+    if (!entry?.manifest) {
+      this.unmount();
+      this.shownPet = null;
+      return;
+    }
     let sheet;
     try {
       sheet = await loadSpritesheet(entry.folder, entry.manifest);
     } catch (error) {
-      new Notice(`Crisp Pets: ${entry.manifest.displayName} 无法加载（${error instanceof Error ? error.message : error}）`);
+      if (token !== this.mountToken || this.disposed) return;
+      const kept = this.el ? "，先保留当前宠物" : "";
+      new Notice(`Crisp Pets: ${entry.manifest.displayName} 无法加载${kept}（${error instanceof Error ? error.message : error}）`);
       return;
     }
-    if (token !== this.mountToken) {
+    if (token !== this.mountToken || this.disposed) {
       URL.revokeObjectURL(sheet.url);
       return;
     }
+    this.unmount();
     this.sheetUrl = sheet.url;
     this.shownPet = entry.name;
     this.petName = entry.manifest.displayName;
     this.mood = new PetMood(entry.manifest.spriteVersion === 2);
     this.el = document.body.createDiv({ cls: "crisp-pets" });
-    this.spriteEl = this.el.createDiv({ cls: "crisp-pets-sprite", attr: { "aria-label": this.petName, role: "button" } });
+    this.spriteEl = this.el.createDiv({
+      cls: "crisp-pets-sprite",
+      attr: { "aria-label": this.petName, role: "button", tabindex: "0", "aria-haspopup": "dialog" },
+    });
     this.overlay = new PetOverlay(this.el, (id) => this.runCommand(id));
     this.sprite = new PetSprite(this.spriteEl, sheet, () => this.mood!.pose(Date.now()), () => this.reducedMotion.matches);
     this.sprite.setScale(this.options.size / 100);
     this.applyPosition();
     this.attachDrag(this.spriteEl);
     this.attachDrop(this.spriteEl);
+    this.spriteEl.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      this.nudge((mood, now) => mood.trigger("waving", now));
+      this.togglePanel(true);
+    });
     this.syncReading();
     this.mood.setFocusing(focusingFromSnapshot(this.focusSnapshot()));
     this.mood.trigger("waving", Date.now());
@@ -179,6 +204,13 @@ export default class CrispPetsPlugin extends Plugin {
     if (selection === this.codexSelection) return;
     this.codexSelection = selection;
     if (this.chosenPet()?.name !== this.shownPet) await this.mount();
+  }
+
+  // A note's existing completed tasks are its baseline, so the first new tick in it already counts.
+  private seedTasks(): void {
+    const file = this.app.workspace.getActiveFile();
+    if (!file || this.doneTasks.has(file.path)) return;
+    this.doneTasks.set(file.path, countDone(this.app.metadataCache.getFileCache(file)?.listItems));
   }
 
   private unmount(): void {
@@ -214,7 +246,7 @@ export default class CrispPetsPlugin extends Plugin {
   // Jumps when the active note gains a completed task. The first sighting of a file only sets a baseline,
   // so opening notes or sync updates elsewhere never trigger it.
   private checkTasks(file: TFile, items: { task?: string }[] | undefined): void {
-    const done = (items ?? []).filter((item) => item.task !== undefined && item.task !== " ").length;
+    const done = countDone(items);
     const previous = this.doneTasks.get(file.path);
     this.doneTasks.set(file.path, done);
     if (previous !== undefined && done > previous && this.app.workspace.getActiveFile()?.path === file.path) {
@@ -255,12 +287,16 @@ export default class CrispPetsPlugin extends Plugin {
   }
 
   // Ambient lines go through the gate; replies to something the user just did pass cooldown 0.
+  // While the panel is open, ambient lines wait; a reply to the user's own action closes the panel to be seen.
   private say(key: string, cooldownMs: number, text: string, onClick?: () => void): boolean {
-    if (!this.overlay || this.overlay.panelOpen) return false;
+    if (!this.overlay) return false;
+    if (this.overlay.panelOpen) {
+      if (cooldownMs > 0) return false;
+      this.overlay.closePanel();
+    }
     const now = Date.now();
     if (cooldownMs > 0 && !this.bubbles.allow(key, cooldownMs, now)) return false;
     this.bubbles.note(now);
-    this.placeOverlay();
     this.overlay.say(text, onClick);
     return true;
   }
@@ -285,7 +321,7 @@ export default class CrispPetsPlugin extends Plugin {
         next = null;
       }
     }
-    if (token !== this.pulseToken) return;
+    if (token !== this.pulseToken || this.disposed) return;
     const previous = this.pulseToday;
     this.pulseToday = next;
     this.refreshPanel();
@@ -321,25 +357,20 @@ export default class CrispPetsPlugin extends Plugin {
     };
   }
 
-  private togglePanel(): void {
+  // From the keyboard, focus moves into the panel; Escape brings it back to the pet.
+  private togglePanel(fromKeyboard = false): void {
     if (!this.overlay) return;
     if (this.overlay.panelOpen) {
       this.overlay.closePanel();
+      if (fromKeyboard) this.spriteEl?.focus();
       return;
     }
-    this.placeOverlay();
-    this.overlay.openPanel(this.panelContent());
+    this.overlay.openPanel(this.panelContent(), fromKeyboard);
     void this.refreshPulse();
   }
 
   private refreshPanel(): void {
     if (this.overlay?.panelOpen) this.overlay.refreshPanel(this.panelContent());
-  }
-
-  private placeOverlay(): void {
-    if (!this.el || !this.overlay) return;
-    const rect = this.el.getBoundingClientRect();
-    this.overlay.placeFor(rect.left + rect.width / 2, window.innerWidth);
   }
 
   private pulseApi(): PulseMemoApi | undefined {
@@ -395,8 +426,7 @@ export default class CrispPetsPlugin extends Plugin {
       this.say("drop", 0, `太长了，速记一次最多 ${MAX_DROP_CHARS} 字`);
       return;
     }
-    const drop = resolveDrop(text, this.pressedSelection, Date.now());
-    this.pressedSelection = null;
+    const drop = this.dragSession.resolve(text, Date.now());
     if (drop.text.length > MAX_DROP_CHARS) {
       this.say("drop", 0, `太长了，速记一次最多 ${MAX_DROP_CHARS} 字`);
       return;
@@ -418,8 +448,8 @@ export default class CrispPetsPlugin extends Plugin {
   }
 
   private rememberSelection(event: PointerEvent): void {
-    if (!(event.target instanceof Element) || !event.target.closest(".cm-content")) return;
-    this.pressedSelection = null;
+    this.dragSession.pressElsewhere();
+    if (!inEditor(event.target)) return;
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view) return;
     // Only a press on the selected text itself can start dragging it. editor.cm is CodeMirror's EditorView,
@@ -430,7 +460,7 @@ export default class CrispPetsPlugin extends Plugin {
     const to = view.editor.posToOffset(view.editor.getCursor("to"));
     if (pos === null || pos === undefined || pos < from || pos > to || from === to) return;
     const text = normalizeDrop(view.editor.getSelection());
-    if (text) this.pressedSelection = { text, path: view.file?.path ?? null, at: Date.now() };
+    if (text) this.dragSession.press({ text, path: view.file?.path ?? null }, Date.now());
   }
 
   private focusSnapshot(): unknown {
@@ -451,7 +481,8 @@ export default class CrispPetsPlugin extends Plugin {
   }
 
   private onPointer(event: PointerEvent): void {
-    if (!this.el) return;
+    // v1 pets have no look directions, so there is nothing to measure for them.
+    if (!this.el || !this.mood?.canLook) return;
     const rect = this.el.getBoundingClientRect();
     const dx = event.clientX - (rect.left + rect.width / 2);
     const dy = event.clientY - (rect.top + rect.height / 2);
@@ -477,7 +508,8 @@ export default class CrispPetsPlugin extends Plugin {
       } catch {
         // Synthetic or already released pointers cannot be captured; dragging still works without it.
       }
-      const start = { ...this.options.offset };
+      // Start from where the pet is shown: a position saved in a larger window may be clamped on screen.
+      const start = displayedOffset(this.el!.getBoundingClientRect(), window.innerWidth, window.innerHeight);
       let moved = false;
       let lastX = down.clientX;
       const move = (event: PointerEvent) => {
@@ -499,7 +531,8 @@ export default class CrispPetsPlugin extends Plugin {
         el.removeClass("is-dragging");
         this.nudge((mood) => mood.drag(null));
         if (moved) {
-          this.placeOverlay();
+          this.options.offset = displayedOffset(this.el!.getBoundingClientRect(), window.innerWidth, window.innerHeight);
+          this.overlay?.reposition();
           void this.saveOptions();
         } else {
           this.nudge((mood, now) => mood.trigger("waving", now));
@@ -511,4 +544,14 @@ export default class CrispPetsPlugin extends Plugin {
       el.addEventListener("pointercancel", up);
     });
   }
+}
+
+function countDone(items: { task?: string }[] | undefined): number {
+  return (items ?? []).filter((item) => item.task !== undefined && item.task !== " ").length;
+}
+
+// dragstart and pointerdown can target a text node inside the editor.
+function inEditor(target: EventTarget | null): boolean {
+  const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+  return !!element?.closest(".cm-content");
 }

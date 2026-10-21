@@ -2,6 +2,7 @@
 // so they move with it; they open toward the middle of the window.
 import { setIcon } from "obsidian";
 import { bubbleDuration } from "./bubble-gate";
+import { overlayBelow } from "./layout";
 import { FocusCard, PanelAction, PanelModel } from "./panel-model";
 
 export class PetOverlay {
@@ -22,9 +23,13 @@ export class PetOverlay {
     this.panelEl.hide();
   }
 
-  // Which side the pet sits on decides where the bubble and panel open.
-  placeFor(centerX: number, viewportWidth: number): void {
-    this.root.toggleClass("is-left", centerX < viewportWidth / 2);
+  // Opens toward the middle of the window horizontally, and below the pet when it does not fit above.
+  reposition(): void {
+    const win = this.root.win ?? window;
+    const pet = this.root.getBoundingClientRect();
+    this.root.toggleClass("is-left", pet.left + pet.width / 2 < win.innerWidth / 2);
+    const shown = this.panelOpen ? this.panelEl : this.bubbleEl.isShown() ? this.bubbleEl : null;
+    if (shown) this.root.toggleClass("is-below", overlayBelow(pet, shown.offsetHeight, win.innerHeight));
   }
 
   say(text: string, onClick?: () => void): void {
@@ -32,14 +37,32 @@ export class PetOverlay {
     this.bubbleEl.empty();
     this.bubbleEl.setText(text);
     this.bubbleEl.toggleClass("is-clickable", !!onClick);
-    this.bubbleEl.onclick = onClick
-      ? (event) => {
-          event.stopPropagation();
+    const activate = onClick
+      ? () => {
           this.hideBubble();
           onClick();
         }
       : null;
+    this.bubbleEl.onclick = activate
+      ? (event) => {
+          event.stopPropagation();
+          activate();
+        }
+      : null;
+    // A bubble with an action is a button for the keyboard too.
+    if (activate) {
+      this.bubbleEl.setAttrs({ role: "button", tabindex: "0" });
+      this.bubbleEl.onkeydown = (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        activate();
+      };
+    } else {
+      this.bubbleEl.setAttrs({ role: "status", tabindex: null });
+      this.bubbleEl.onkeydown = null;
+    }
     this.bubbleEl.show();
+    this.reposition();
     if (this.bubbleTimer !== null) window.clearTimeout(this.bubbleTimer);
     this.bubbleTimer = window.setTimeout(() => this.hideBubble(), bubbleDuration(text));
   }
@@ -54,11 +77,13 @@ export class PetOverlay {
     return this.panelEl.isShown();
   }
 
-  openPanel(model: PanelModel): void {
+  openPanel(model: PanelModel, focus = false): void {
     this.hideBubble();
     this.panelKey = "";
     this.renderPanel(model);
     this.panelEl.show();
+    this.reposition();
+    if (focus) this.panelEl.querySelector<HTMLElement>("button")?.focus();
   }
 
   // While open: the countdown and progress bar are patched in place; anything else re-renders,
@@ -66,7 +91,10 @@ export class PetOverlay {
   refreshPanel(model: PanelModel): void {
     if (!this.panelOpen) return;
     if (structureKey(model) !== this.panelKey) {
+      const hadFocus = this.panelEl.contains(document.activeElement);
       this.renderPanel(model);
+      if (hadFocus) this.panelEl.querySelector<HTMLElement>("button")?.focus();
+      this.reposition();
       return;
     }
     if (this.liveTime && model.focus?.time) this.liveTime.setText(model.focus.time);

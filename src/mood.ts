@@ -24,7 +24,7 @@ export class PetMood {
   private dragDirection: "left" | "right" | null = null;
   private pointer: { dx: number; dy: number; at: number } | null = null;
 
-  constructor(private readonly canLook: boolean) {}
+  constructor(readonly canLook: boolean) {}
 
   typed(now: number): void {
     this.lastTyped = now;

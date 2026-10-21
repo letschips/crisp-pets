@@ -48,25 +48,42 @@ export function canCapture(pulse: PulseMemoApi | undefined): pulse is Required<P
   );
 }
 
-// The selection under the mouse when a drag began in an editor.
+// Obsidian's editor collapses the selection to the character under the mouse before the drag starts, so only
+// that character arrives. The session remembers the selection pressed on and lends it to exactly one drag that
+// starts from the editor right after; any other press, a drag from elsewhere, or the drag ending clears it.
+export const PRESS_TO_DRAG_MS = 5000;
+
 export interface PressedSelection {
   text: string;
   path: string | null;
-  at: number;
 }
 
-export const PRESS_TTL_MS = 60000;
+export class DragSession {
+  private pressed: (PressedSelection & { at: number }) | null = null;
+  private active: PressedSelection | null = null;
 
-// Obsidian's editor collapses the selection to the character under the mouse before the drag starts,
-// so only that character arrives. When the dropped text is part of the selection that was pressed on,
-// the whole selection is meant, and it came from that note.
-export function resolveDrop(
-  dropped: string,
-  pressed: PressedSelection | null,
-  now: number,
-): { text: string; sourcePath: string | null } {
-  if (pressed && now - pressed.at <= PRESS_TTL_MS && dropped && pressed.text.includes(dropped)) {
-    return { text: pressed.text, sourcePath: pressed.path };
+  press(selection: PressedSelection, now: number): void {
+    this.pressed = { ...selection, at: now };
   }
-  return { text: dropped, sourcePath: null };
+
+  pressElsewhere(): void {
+    this.pressed = null;
+  }
+
+  dragStart(fromEditor: boolean, now: number): void {
+    const pressed = this.pressed;
+    this.active = fromEditor && pressed && now - pressed.at <= PRESS_TO_DRAG_MS ? { text: pressed.text, path: pressed.path } : null;
+    this.pressed = null;
+  }
+
+  end(): void {
+    this.active = null;
+  }
+
+  resolve(dropped: string, _now: number): { text: string; sourcePath: string | null } {
+    const active = this.active;
+    this.active = null;
+    if (active && dropped && active.text.includes(dropped)) return { text: active.text, sourcePath: active.path };
+    return { text: dropped, sourcePath: null };
+  }
 }

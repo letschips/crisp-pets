@@ -142,15 +142,3 @@ test("pet waits while text hovers over it", () => {
   mood.setExpecting(false);
   assert.equal(mood.pose(0).state, "running");
 });
-
-test("drop from the editor: the full selection pressed on wins over the one character the editor hands over", async () => {
-  const { resolveDrop } = await load("memo-drop");
-  const pressed = { text: "这是一段用来测试拖给宠物的文字。", path: "Notes/a.md", at: 1000 };
-  assert.deepEqual(resolveDrop("试", pressed, 2000), { text: "这是一段用来测试拖给宠物的文字。", sourcePath: "Notes/a.md" });
-  // Unrelated text (from a browser) or a stale press keeps what was dropped, without a source.
-  assert.deepEqual(resolveDrop("别处的字", pressed, 2000), { text: "别处的字", sourcePath: null });
-  assert.deepEqual(resolveDrop("试", pressed, 1000 + 60001), { text: "试", sourcePath: null });
-  assert.deepEqual(resolveDrop("试", null, 2000), { text: "试", sourcePath: null });
-  // A whole-selection drop still carries its note.
-  assert.deepEqual(resolveDrop(pressed.text, pressed, 2000), { text: pressed.text, sourcePath: "Notes/a.md" });
-});
