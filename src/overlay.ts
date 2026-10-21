@@ -90,6 +90,7 @@ export class PetOverlay {
       head.createSpan({ cls: "crisp-pets-panel__title", text: section.title });
       if (section.status) head.createSpan({ cls: "crisp-pets-panel__status", text: section.status });
       if (section.task) block.createDiv({ cls: "crisp-pets-panel__task", text: section.task });
+      if (section.note) block.createDiv({ cls: "crisp-pets-panel__note", text: section.note });
       if (!section.actions.length) continue;
       const row = block.createDiv({ cls: "crisp-pets-panel__actions" });
       for (const action of section.actions) {

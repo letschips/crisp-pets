@@ -24,6 +24,7 @@ export interface PanelSection {
   title: string;
   status?: string;
   task?: string;
+  note?: string; // a quieter second line, e.g. today's memo count
   actions: PanelAction[];
 }
 
@@ -65,17 +66,20 @@ export function focusSection(snapshot: FocusSnapshot | null, has: (command: stri
   return { title: "专注", status, task: title || undefined, actions };
 }
 
-export function launcherSections(has: (command: string) => boolean): PanelSection[] {
+export function launcherSections(
+  has: (command: string) => boolean,
+  pulse: { status?: string; note?: string } = {},
+): PanelSection[] {
   const sections: PanelSection[] = [];
-  const pick = (title: string, candidates: PanelAction[]) => {
+  const pick = (title: string, candidates: PanelAction[], extra: { status?: string; note?: string } = {}) => {
     const actions = candidates.filter((action) => has(action.command));
-    if (actions.length) sections.push({ title, actions });
+    if (actions.length) sections.push({ title, ...extra, actions });
   };
   pick("Pulse", [
     { label: "记速记", icon: "pencil-line", command: "crisp-pulse:quick-memo" },
     { label: "看速记", icon: "notebook-pen", command: "crisp-pulse:open-memo-view" },
     { label: "看板", icon: "activity", command: "crisp-pulse:open-crisp-pulse-view" },
-  ]);
+  ], pulse);
   pick("Tempo", [
     { label: "任务", icon: "list-checks", command: "crisp-tempo:open-tempo-view" },
     { label: "新建任务", icon: "plus", command: "crisp-tempo:quick-add-task" },

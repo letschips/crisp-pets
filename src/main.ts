@@ -4,6 +4,7 @@ import { FOCUS_EVENT, focusReaction, focusingFromSnapshot } from "./focus";
 import { MAX_DROP_CHARS, PulseMemoApi, canCapture, memoRequest, normalizeDrop } from "./memo-drop";
 import { PetMood } from "./mood";
 import { PetOverlay } from "./overlay";
+import { PULSE_STATE_EVENT, PulseStateApi, PulseToday, canReadToday, memoLine, parseToday, pulseReactions, pulseStatus } from "./pulse";
 import { FocusSnapshot, focusSection, launcherSections } from "./panel-model";
 import { PetEntry, listPets, loadSpritesheet, readCodexSelection, resolvePetsFolder } from "./pets";
 import { PetSettingTab } from "./settings-tab";
@@ -16,6 +17,7 @@ export interface PetSettings {
   petId: string; // pet folder name, used when not following Codex or Codex has no local pet selected
   size: number; // percent of the 192x208 cell
   offset: { right: number; bottom: number };
+  memoNudgedOn: string; // date the evening "memos without a destination" line was last shown
 }
 
 const DEFAULT_SETTINGS: PetSettings = {
@@ -25,11 +27,15 @@ const DEFAULT_SETTINGS: PetSettings = {
   petId: "",
   size: 50,
   offset: { right: 24, bottom: 40 },
+  memoNudgedOn: "",
 };
 
 const DRAG_THRESHOLD_PX = 4;
 const FAILED_COOLDOWN_MS = 10000;
 const PANEL_REFRESH_MS = 15000;
+const PULSE_DEBOUNCE_MS = 800;
+const PULSE_POLL_MS = 10 * 60000; // catches the evening without any Pulse event
+const DAY_LINE_COOLDOWN_MS = 6 * 3600000;
 const DROP_HINT = "把文字拖到我身上，记成一条速记。";
 
 export default class CrispPetsPlugin extends Plugin {
@@ -43,6 +49,9 @@ export default class CrispPetsPlugin extends Plugin {
   private overlay: PetOverlay | null = null;
   private bubbles = new BubbleGate();
   private petName = "";
+  private pulseToday: PulseToday | null = null;
+  private pulseTimer: number | null = null;
+  private pulseToken = 0;
   private sheetUrl: string | null = null;
   private mood: PetMood | null = null;
   private doneTasks = new Map<string, number>();
@@ -89,11 +98,14 @@ export default class CrispPetsPlugin extends Plugin {
       if (event.key === "Escape" && this.overlay?.panelOpen) this.overlay.closePanel();
     });
     this.registerInterval(window.setInterval(() => this.refreshPanel(), PANEL_REFRESH_MS));
+    this.registerEvent(this.app.workspace.on(PULSE_STATE_EVENT as "quit", () => this.schedulePulseRefresh()));
+    this.registerInterval(window.setInterval(() => void this.refreshPulse(), PULSE_POLL_MS));
 
     this.app.workspace.onLayoutReady(() => void this.mount());
   }
 
   onunload(): void {
+    if (this.pulseTimer !== null) window.clearTimeout(this.pulseTimer);
     this.unmount();
   }
 
@@ -136,6 +148,7 @@ export default class CrispPetsPlugin extends Plugin {
     this.mood.setFocusing(focusingFromSnapshot(this.focusSnapshot()));
     this.mood.trigger("waving", Date.now());
     this.sprite.start();
+    void this.refreshPulse();
   }
 
   // Re-reads the pets folder and the Codex selection without touching the pet on screen.
@@ -239,13 +252,50 @@ export default class CrispPetsPlugin extends Plugin {
   }
 
   // Ambient lines go through the gate; replies to something the user just did pass cooldown 0.
-  private say(key: string, cooldownMs: number, text: string, onClick?: () => void): void {
-    if (!this.overlay) return;
+  private say(key: string, cooldownMs: number, text: string, onClick?: () => void): boolean {
+    if (!this.overlay || this.overlay.panelOpen) return false;
     const now = Date.now();
-    if (cooldownMs > 0 && !this.bubbles.allow(key, cooldownMs, now)) return;
+    if (cooldownMs > 0 && !this.bubbles.allow(key, cooldownMs, now)) return false;
     this.bubbles.note(now);
     this.placeOverlay();
     this.overlay.say(text, onClick);
+    return true;
+  }
+
+  private schedulePulseRefresh(): void {
+    if (this.pulseTimer !== null) window.clearTimeout(this.pulseTimer);
+    this.pulseTimer = window.setTimeout(() => {
+      this.pulseTimer = null;
+      void this.refreshPulse();
+    }, PULSE_DEBOUNCE_MS);
+  }
+
+  // Re-reads Pulse's today state, reacts to what changed, and updates the open panel.
+  private async refreshPulse(): Promise<void> {
+    const token = ++this.pulseToken;
+    const pulse = this.pluginInstance("crisp-pulse") as PulseStateApi | undefined;
+    let next: PulseToday | null = null;
+    if (canReadToday(pulse)) {
+      try {
+        next = parseToday(await pulse.getTodaySnapshot());
+      } catch {
+        next = null;
+      }
+    }
+    if (token !== this.pulseToken) return;
+    const previous = this.pulseToday;
+    this.pulseToday = next;
+    this.refreshPanel();
+    if (!next || !this.mood) return;
+    for (const line of pulseReactions(previous, next, new Date().getHours(), this.options.memoNudgedOn || null)) {
+      const onClick = line.openMemos ? () => this.runCommand("crisp-pulse:open-memo-view") : undefined;
+      if (!this.say(line.key, DAY_LINE_COOLDOWN_MS, line.text, onClick)) continue;
+      this.nudge((mood, now) => mood.trigger(line.celebrate ? "jumping" : "waving", now));
+      if (line.openMemos) {
+        this.options.memoNudgedOn = next.date;
+        void this.saveOptions();
+      }
+    }
   }
 
   private hasCommand(id: string): boolean {
@@ -262,7 +312,10 @@ export default class CrispPetsPlugin extends Plugin {
     const focus = focusSection(this.focusSnapshot() as FocusSnapshot | null, has);
     return {
       name: this.petName,
-      sections: [...(focus ? [focus] : []), ...launcherSections(has)],
+      sections: [
+        ...(focus ? [focus] : []),
+        ...launcherSections(has, this.pulseToday ? { status: pulseStatus(this.pulseToday), note: memoLine(this.pulseToday) } : {}),
+      ],
       hint: canCapture(this.pulseApi()) ? DROP_HINT : "装上 Crisp Pulse 后，可以把文字拖给我记成速记。",
     };
   }
@@ -275,6 +328,7 @@ export default class CrispPetsPlugin extends Plugin {
     }
     this.placeOverlay();
     this.overlay.openPanel(this.panelContent());
+    void this.refreshPulse();
   }
 
   private refreshPanel(): void {
