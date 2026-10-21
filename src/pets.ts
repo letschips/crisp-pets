@@ -2,7 +2,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { extname, join } from "node:path";
-import { PetManifest, checkAtlasSize, parseManifest } from "./atlas";
+import { CELL_HEIGHT, CELL_WIDTH, PetManifest, checkAtlasSize, parseManifest } from "./atlas";
 import { needsGlobalState, parseSelectedAvatarId, resolveSelectedPet } from "./codex";
 
 export interface PetEntry {
@@ -89,5 +89,27 @@ export async function loadSpritesheet(folder: string, manifest: PetManifest): Pr
   } catch (error) {
     URL.revokeObjectURL(url);
     throw error;
+  }
+}
+
+// A still of the first idle frame for the settings picker. The full spritesheet is decoded once, drawn,
+// and released, so many pets do not keep many large images in memory.
+export async function loadThumbnail(folder: string, manifest: PetManifest, width: number): Promise<HTMLCanvasElement> {
+  const sheet = await loadSpritesheet(folder, manifest);
+  try {
+    const image = new Image();
+    image.src = sheet.url;
+    await image.decode();
+    const ratio = window.devicePixelRatio || 1;
+    const height = Math.round((width * CELL_HEIGHT) / CELL_WIDTH);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    canvas.getContext("2d")?.drawImage(image, 0, 0, CELL_WIDTH, CELL_HEIGHT, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  } finally {
+    URL.revokeObjectURL(sheet.url);
   }
 }

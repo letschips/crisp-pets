@@ -1,10 +1,12 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type CrispPetsPlugin from "./main";
 import { homedir } from "node:os";
-import { PetEntry, defaultPetsFolder, loadSpritesheet, resolvePetsFolder } from "./pets";
+import { PetEntry, defaultPetsFolder, loadSpritesheet, loadThumbnail, resolvePetsFolder } from "./pets";
+import { matchesQuery, orderPets, pickerLayout } from "./picker";
 import { PetSprite } from "./sprite";
 
 const THUMB_SCALE = 0.5;
+const COMPACT_THUMB_PX = 64;
 const AUTHOR_URL = "https://xhslink.cn/m/3MwtKu4822b";
 
 function tildify(path: string): string {
@@ -14,6 +16,7 @@ function tildify(path: string): string {
 
 export class PetSettingTab extends PluginSettingTab {
   private previews: { sprite: PetSprite; url: string }[] = [];
+  private observer: IntersectionObserver | null = null;
   private renderToken = 0;
   private licenseDraft = "";
   private checking = false;
@@ -68,8 +71,15 @@ export class PetSettingTab extends PluginSettingTab {
         }),
       );
 
-    containerEl.createEl("div", { cls: "setting-item-name crisp-pets-heading", text: "宠物形象" });
+    const layout = pickerLayout(plugin.pets.length);
+    const heading = containerEl.createDiv({ cls: "crisp-pets-heading" });
+    heading.createSpan({ cls: "setting-item-name", text: "宠物形象" });
+    if (plugin.pets.length > 1) heading.createSpan({ cls: "crisp-pets-count", text: `${plugin.pets.length} 只` });
+    const search = layout.search
+      ? heading.createEl("input", { cls: "crisp-pets-search", attr: { type: "search", placeholder: "搜索宠物", "aria-label": "搜索宠物" } })
+      : null;
     const grid = containerEl.createDiv({ cls: "crisp-pets-grid" });
+    grid.toggleClass("is-compact", layout.compact);
     const chosen = plugin.chosenPet();
     if (!plugin.pets.length) {
       grid.createDiv({
@@ -77,7 +87,35 @@ export class PetSettingTab extends PluginSettingTab {
         text: `没有在 ${tildify(resolvePetsFolder(plugin.options.petsFolder))} 找到宠物。可以用 Codex 的 hatch-pet 生成，或在下面换个目录。`,
       });
     }
-    for (const pet of plugin.pets) this.renderCard(grid, pet, pet === chosen, pet === codexPet, token);
+    // Thumbnails load as cards scroll into view; a compact grid scrolls inside itself.
+    this.observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          this.observer?.unobserve(entry.target);
+          (entry.target as HTMLElement & { loadThumb?: () => void }).loadThumb?.();
+        }
+      },
+      { root: layout.compact ? grid : null, rootMargin: "120px" },
+    );
+    const cards: { card: HTMLElement; fields: (string | undefined)[] }[] = [];
+    for (const pet of orderPets(plugin.pets, chosen, layout.compact)) {
+      const card = this.renderCard(grid, pet, pet === chosen, pet === codexPet, token, layout.compact);
+      cards.push({ card, fields: [pet.manifest?.displayName, pet.name] });
+    }
+    if (search) {
+      const none = grid.createDiv({ cls: "crisp-pets-empty", text: "没有匹配的宠物" });
+      none.hide();
+      search.addEventListener("input", () => {
+        let shown = 0;
+        for (const { card, fields } of cards) {
+          const match = matchesQuery(fields, search.value);
+          card.toggle(match);
+          if (match) shown++;
+        }
+        none.toggle(shown === 0);
+      });
+    }
 
     new Setting(containerEl).setName("大小").addSlider((slider) =>
       slider
@@ -214,7 +252,14 @@ export class PetSettingTab extends PluginSettingTab {
     link.rel = "noopener noreferrer";
   }
 
-  private renderCard(grid: HTMLElement, pet: PetEntry, selected: boolean, isCodex: boolean, token: number): void {
+  private renderCard(
+    grid: HTMLElement,
+    pet: PetEntry,
+    selected: boolean,
+    isCodex: boolean,
+    token: number,
+    compact: boolean,
+  ): HTMLElement {
     const card = grid.createEl("button", { cls: "crisp-pets-card" });
     card.toggleClass("is-selected", selected);
     const thumb = card.createDiv({ cls: "crisp-pets-thumb" });
@@ -224,12 +269,19 @@ export class PetSettingTab extends PluginSettingTab {
 
     if (!pet.manifest) {
       card.disabled = true;
+      card.setAttr("aria-label", `${pet.name}\n${pet.error ?? "无法读取"}`);
       info.createDiv({ cls: "crisp-pets-error", text: pet.error ?? "无法读取" });
-      return;
+      return card;
     }
     const manifest = pet.manifest;
-    if (manifest.description) info.createDiv({ cls: "crisp-pets-desc", text: manifest.description });
-    info.createDiv({ cls: "crisp-pets-meta", text: manifest.spriteVersion === 2 ? "v2 · 会看向鼠标" : "v1" });
+    const meta = manifest.spriteVersion === 2 ? "v2 · 会看向鼠标" : "v1";
+    if (compact) {
+      // Description and version move into the tooltip.
+      card.setAttr("aria-label", [manifest.displayName, manifest.description, meta].filter(Boolean).join("\n"));
+    } else {
+      if (manifest.description) info.createDiv({ cls: "crisp-pets-desc", text: manifest.description });
+      info.createDiv({ cls: "crisp-pets-meta", text: meta });
+    }
     card.setAttr("aria-pressed", String(selected));
 
     card.addEventListener("click", async () => {
@@ -241,28 +293,36 @@ export class PetSettingTab extends PluginSettingTab {
       await this.applyChoice();
     });
 
-    void loadSpritesheet(pet.folder, manifest).then(
-      (sheet) => {
-        if (token !== this.renderToken) {
-          URL.revokeObjectURL(sheet.url);
-          return;
-        }
-        // Still on the first idle frame; plays the idle loop while hovered.
-        const sprite = new PetSprite(thumb, sheet, () => ({ kind: "animation", state: "idle" }), () => false);
-        sprite.setScale(THUMB_SCALE);
-        card.addEventListener("mouseenter", () => sprite.start());
-        card.addEventListener("mouseleave", () => {
-          sprite.stop();
-          sprite.reset();
-        });
-        this.previews.push({ sprite, url: sheet.url });
-      },
-      (error) => {
-        if (token !== this.renderToken) return;
-        card.disabled = true;
-        info.createDiv({ cls: "crisp-pets-error", text: error instanceof Error ? error.message : String(error) });
-      },
-    );
+    const fail = (error: unknown) => {
+      if (token !== this.renderToken) return;
+      const message = error instanceof Error ? error.message : String(error);
+      card.disabled = true;
+      card.setAttr("aria-label", `${manifest.displayName}\n${message}`);
+      info.createDiv({ cls: "crisp-pets-error", text: message });
+    };
+    (card as HTMLElement & { loadThumb?: () => void }).loadThumb = compact
+      ? () =>
+          void loadThumbnail(pet.folder, manifest, COMPACT_THUMB_PX).then((canvas) => {
+            if (token === this.renderToken) thumb.appendChild(canvas);
+          }, fail)
+      : () =>
+          void loadSpritesheet(pet.folder, manifest).then((sheet) => {
+            if (token !== this.renderToken) {
+              URL.revokeObjectURL(sheet.url);
+              return;
+            }
+            // Still on the first idle frame; plays the idle loop while hovered.
+            const sprite = new PetSprite(thumb, sheet, () => ({ kind: "animation", state: "idle" }), () => false);
+            sprite.setScale(THUMB_SCALE);
+            card.addEventListener("mouseenter", () => sprite.start());
+            card.addEventListener("mouseleave", () => {
+              sprite.stop();
+              sprite.reset();
+            });
+            this.previews.push({ sprite, url: sheet.url });
+          }, fail);
+    this.observer?.observe(card);
+    return card;
   }
 
   private async applyChoice(): Promise<void> {
@@ -272,6 +332,8 @@ export class PetSettingTab extends PluginSettingTab {
   }
 
   private clearPreviews(): void {
+    this.observer?.disconnect();
+    this.observer = null;
     for (const { sprite, url } of this.previews) {
       sprite.stop();
       URL.revokeObjectURL(url);

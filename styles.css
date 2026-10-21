@@ -398,7 +398,20 @@
 
 /* Settings: pet picker */
 .crisp-pets-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 0.75em 0 0.5em;
+}
+
+.crisp-pets-count {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+.crisp-pets-search {
+  margin-left: auto;
+  width: 180px;
 }
 
 .crisp-pets-grid {
@@ -486,6 +499,49 @@
 .crisp-pets-empty {
   color: var(--text-error);
   font-size: var(--font-ui-smaller);
+}
+
+/* Many pets: small cards with name only, scrolling inside about two and a half rows. */
+.crisp-pets-grid.is-compact {
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+  max-height: 300px;
+  margin-bottom: 0.75em;
+  padding: 2px 4px 2px 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.crisp-pets-grid.is-compact .crisp-pets-card {
+  position: relative;
+  gap: 4px;
+  padding: 8px 6px 6px;
+}
+
+.crisp-pets-grid.is-compact .crisp-pets-thumb {
+  width: 64px;
+  height: 69px;
+}
+
+.crisp-pets-grid.is-compact .crisp-pets-name {
+  overflow: hidden;
+  font-size: var(--font-ui-smaller);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crisp-pets-grid.is-compact .crisp-pets-tag {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  margin: 0;
+  font-size: 10px;
+}
+
+.crisp-pets-grid.is-compact .crisp-pets-error {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .crisp-pets-empty {
