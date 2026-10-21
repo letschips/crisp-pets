@@ -19,6 +19,7 @@ export class PetMood {
   private lastTyped = -Infinity;
   private reading = false;
   private focusing = false;
+  private expecting = false;
   private oneShot: { state: OneShot; until: number } | null = null;
   private dragDirection: "left" | "right" | null = null;
   private pointer: { dx: number; dy: number; at: number } | null = null;
@@ -38,6 +39,11 @@ export class PetMood {
     this.focusing = focusing;
   }
 
+  // Text is being dragged over the pet: it waits for the drop.
+  setExpecting(expecting: boolean): void {
+    this.expecting = expecting;
+  }
+
   // Plays a whole row once. A lower-priority reaction never cuts off a higher one still playing.
   trigger(state: OneShot, now: number): void {
     const current = this.oneShot;
@@ -55,6 +61,7 @@ export class PetMood {
 
   pose(now: number): Pose {
     if (this.dragDirection) return { kind: "animation", state: `running-${this.dragDirection}` };
+    if (this.expecting) return { kind: "animation", state: "waiting" };
     if (this.oneShot && this.oneShot.until > now) return { kind: "animation", state: this.oneShot.state };
     this.oneShot = null;
     if (this.focusing || now - this.lastTyped < TYPING_HOLD_MS) return { kind: "animation", state: "running" };

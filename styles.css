@@ -5,14 +5,146 @@
 .crisp-pets {
   position: fixed;
   z-index: var(--layer-status-bar);
+}
+
+.crisp-pets-sprite {
   background-repeat: no-repeat;
   cursor: grab;
   touch-action: none;
   user-select: none;
 }
 
-.crisp-pets.is-dragging {
+.crisp-pets-sprite.is-dragging {
   cursor: grabbing;
+}
+
+/* Text dragged over the pet: a soft ring says it will be caught. */
+.crisp-pets-sprite.is-drop-target {
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--interactive-accent);
+  background-color: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+}
+
+/* Bubble and panel open above the pet, toward the middle of the window. */
+.crisp-pets-bubble,
+.crisp-pets-panel {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  box-shadow: var(--shadow-s);
+  color: var(--text-normal);
+}
+
+.crisp-pets.is-left .crisp-pets-bubble,
+.crisp-pets.is-left .crisp-pets-panel {
+  right: auto;
+  left: 0;
+}
+
+.crisp-pets-bubble {
+  width: max-content;
+  max-width: 240px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  font-size: var(--font-ui-small);
+  line-height: 1.45;
+  animation: crisp-pets-pop 160ms ease-out;
+}
+
+.crisp-pets-bubble.is-clickable {
+  cursor: pointer;
+}
+
+.crisp-pets-bubble.is-clickable:hover {
+  background: var(--background-primary-alt);
+}
+
+@keyframes crisp-pets-pop {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crisp-pets-bubble {
+    animation: none;
+  }
+}
+
+.crisp-pets-panel {
+  width: 248px;
+  padding: 12px;
+  border-radius: 14px;
+  box-shadow: var(--shadow-l);
+  font-size: var(--font-ui-small);
+}
+
+.crisp-pets-panel__name {
+  font-weight: var(--font-semibold);
+}
+
+.crisp-pets-panel__section {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.crisp-pets-panel__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.crisp-pets-panel__title {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.crisp-pets-panel__status {
+  color: var(--text-normal);
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+}
+
+.crisp-pets-panel__task {
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crisp-pets-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.crisp-pets-panel__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 8px;
+  font-size: var(--font-ui-smaller);
+}
+
+.crisp-pets-panel__icon {
+  display: inline-flex;
+}
+
+.crisp-pets-panel__icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.crisp-pets-panel__hint {
+  margin-top: 10px;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
 }
 
 /* Settings: pet picker */

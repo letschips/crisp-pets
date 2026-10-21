@@ -1,6 +1,10 @@
 import { MarkdownView, Notice, Plugin, TFile } from "obsidian";
+import { BubbleGate } from "./bubble-gate";
 import { FOCUS_EVENT, focusReaction, focusingFromSnapshot } from "./focus";
+import { MAX_DROP_CHARS, PulseMemoApi, canCapture, memoRequest, normalizeDrop } from "./memo-drop";
 import { PetMood } from "./mood";
+import { PetOverlay } from "./overlay";
+import { FocusSnapshot, focusSection, launcherSections } from "./panel-model";
 import { PetEntry, listPets, loadSpritesheet, readCodexSelection, resolvePetsFolder } from "./pets";
 import { PetSettingTab } from "./settings-tab";
 import { PetSprite } from "./sprite";
@@ -25,14 +29,20 @@ const DEFAULT_SETTINGS: PetSettings = {
 
 const DRAG_THRESHOLD_PX = 4;
 const FAILED_COOLDOWN_MS = 10000;
+const PANEL_REFRESH_MS = 15000;
+const DROP_HINT = "把文字拖到我身上，记成一条速记。";
 
 export default class CrispPetsPlugin extends Plugin {
   options: PetSettings = { ...DEFAULT_SETTINGS };
   pets: PetEntry[] = [];
   codexSelection: string | null = null;
   shownPet: string | null = null;
-  private el: HTMLElement | null = null;
+  private el: HTMLElement | null = null; // fixed container: sprite + bubble + panel
+  private spriteEl: HTMLElement | null = null;
   private sprite: PetSprite | null = null;
+  private overlay: PetOverlay | null = null;
+  private bubbles = new BubbleGate();
+  private petName = "";
   private sheetUrl: string | null = null;
   private mood: PetMood | null = null;
   private doneTasks = new Map<string, number>();
@@ -72,6 +82,13 @@ export default class CrispPetsPlugin extends Plugin {
     this.registerDomEvent(window, "resize", () => this.applyPosition());
     // Codex may switch pets while Obsidian is in the background.
     this.registerDomEvent(window, "focus", () => void this.followCodexChange());
+    this.registerDomEvent(document, "pointerdown", (event) => {
+      if (this.overlay?.panelOpen && !this.overlay.contains(event.target)) this.overlay.closePanel();
+    });
+    this.registerDomEvent(document, "keydown", (event) => {
+      if (event.key === "Escape" && this.overlay?.panelOpen) this.overlay.closePanel();
+    });
+    this.registerInterval(window.setInterval(() => this.refreshPanel(), PANEL_REFRESH_MS));
 
     this.app.workspace.onLayoutReady(() => void this.mount());
   }
@@ -105,12 +122,16 @@ export default class CrispPetsPlugin extends Plugin {
     }
     this.sheetUrl = sheet.url;
     this.shownPet = entry.name;
+    this.petName = entry.manifest.displayName;
     this.mood = new PetMood(entry.manifest.spriteVersion === 2);
-    this.el = document.body.createDiv({ cls: "crisp-pets", attr: { "aria-label": entry.manifest.displayName } });
-    this.sprite = new PetSprite(this.el, sheet, () => this.mood!.pose(Date.now()), () => this.reducedMotion.matches);
+    this.el = document.body.createDiv({ cls: "crisp-pets" });
+    this.spriteEl = this.el.createDiv({ cls: "crisp-pets-sprite", attr: { "aria-label": this.petName, role: "button" } });
+    this.overlay = new PetOverlay(this.el, (id) => this.runCommand(id));
+    this.sprite = new PetSprite(this.spriteEl, sheet, () => this.mood!.pose(Date.now()), () => this.reducedMotion.matches);
     this.sprite.setScale(this.options.size / 100);
     this.applyPosition();
-    this.attachDrag(this.el);
+    this.attachDrag(this.spriteEl);
+    this.attachDrop(this.spriteEl);
     this.syncReading();
     this.mood.setFocusing(focusingFromSnapshot(this.focusSnapshot()));
     this.mood.trigger("waving", Date.now());
@@ -147,8 +168,11 @@ export default class CrispPetsPlugin extends Plugin {
   private unmount(): void {
     this.sprite?.stop();
     this.sprite = null;
+    this.overlay?.destroy();
+    this.overlay = null;
     this.el?.remove();
     this.el = null;
+    this.spriteEl = null;
     this.mood = null;
     if (this.sheetUrl) URL.revokeObjectURL(this.sheetUrl);
     this.sheetUrl = null;
@@ -184,18 +208,160 @@ export default class CrispPetsPlugin extends Plugin {
 
   private onFocusEvent(event: unknown): void {
     const reaction = focusReaction(event);
-    if (!reaction) return;
-    this.nudge((mood, now) => {
-      mood.setFocusing(reaction.focusing);
-      if (reaction.jump) mood.trigger("jumping", now);
+    if (reaction) {
+      this.nudge((mood, now) => {
+        mood.setFocusing(reaction.focusing);
+        if (reaction.jump) mood.trigger("jumping", now);
+      });
+    }
+    this.focusBubble(event);
+    // Focus updates its own state after emitting, so read the snapshot a moment later.
+    window.setTimeout(() => this.refreshPanel(), 0);
+  }
+
+  private focusBubble(event: unknown): void {
+    if (typeof event !== "object" || event === null) return;
+    const { type, kind, pomodoro, plannedMinutes, task } = event as {
+      type?: string;
+      kind?: string;
+      pomodoro?: boolean;
+      plannedMinutes?: number;
+      task?: { title?: string } | null;
+    };
+    if (type !== "complete") return;
+    if (kind === "focus") {
+      const done = pomodoro ? "完成一个番茄" : `专注 ${plannedMinutes ?? 0} 分钟完成`;
+      const title = task?.title?.trim();
+      this.say("focus-complete", 0, title ? `${done} · ${title}` : done);
+    } else if (kind === "break" && this.hasCommand("crisp-focus:start-pomodoro")) {
+      this.say("break-complete", 0, "休息好了，开始下一个？", () => this.runCommand("crisp-focus:start-pomodoro"));
+    }
+  }
+
+  // Ambient lines go through the gate; replies to something the user just did pass cooldown 0.
+  private say(key: string, cooldownMs: number, text: string, onClick?: () => void): void {
+    if (!this.overlay) return;
+    const now = Date.now();
+    if (cooldownMs > 0 && !this.bubbles.allow(key, cooldownMs, now)) return;
+    this.bubbles.note(now);
+    this.placeOverlay();
+    this.overlay.say(text, onClick);
+  }
+
+  private hasCommand(id: string): boolean {
+    // app.commands is not in the public typings.
+    return !!(this.app as unknown as { commands: { findCommand(id: string): unknown } }).commands.findCommand(id);
+  }
+
+  private runCommand(id: string): void {
+    (this.app as unknown as { commands: { executeCommandById(id: string): boolean } }).commands.executeCommandById(id);
+  }
+
+  private panelContent() {
+    const has = (id: string) => this.hasCommand(id);
+    const focus = focusSection(this.focusSnapshot() as FocusSnapshot | null, has);
+    return {
+      name: this.petName,
+      sections: [...(focus ? [focus] : []), ...launcherSections(has)],
+      hint: canCapture(this.pulseApi()) ? DROP_HINT : "装上 Crisp Pulse 后，可以把文字拖给我记成速记。",
+    };
+  }
+
+  private togglePanel(): void {
+    if (!this.overlay) return;
+    if (this.overlay.panelOpen) {
+      this.overlay.closePanel();
+      return;
+    }
+    this.placeOverlay();
+    this.overlay.openPanel(this.panelContent());
+  }
+
+  private refreshPanel(): void {
+    if (this.overlay?.panelOpen) this.overlay.refreshPanel(this.panelContent());
+  }
+
+  private placeOverlay(): void {
+    if (!this.el || !this.overlay) return;
+    const rect = this.el.getBoundingClientRect();
+    this.overlay.placeFor(rect.left + rect.width / 2, window.innerWidth);
+  }
+
+  private pulseApi(): PulseMemoApi | undefined {
+    return this.pluginInstance("crisp-pulse") as PulseMemoApi | undefined;
+  }
+
+  private pluginInstance(id: string): unknown {
+    // app.plugins is not in the public typings.
+    return (this.app as unknown as { plugins?: { plugins?: Record<string, unknown> } }).plugins?.plugins?.[id];
+  }
+
+  private attachDrop(el: HTMLElement): void {
+    const acceptsText = (event: DragEvent) => !!event.dataTransfer?.types.includes("text/plain");
+    el.addEventListener("dragover", (event) => {
+      if (!acceptsText(event)) return;
+      event.preventDefault();
+      event.dataTransfer!.dropEffect = "copy";
+      if (!el.hasClass("is-drop-target")) {
+        el.addClass("is-drop-target");
+        this.nudge((mood) => mood.setExpecting(true));
+      }
     });
+    const leave = () => {
+      el.removeClass("is-drop-target");
+      this.nudge((mood) => mood.setExpecting(false));
+    };
+    el.addEventListener("dragleave", leave);
+    el.addEventListener("drop", (event) => {
+      if (!acceptsText(event)) return;
+      event.preventDefault();
+      leave();
+      void this.captureDrop(event.dataTransfer!.getData("text/plain"));
+    });
+  }
+
+  // Dropped text goes to Pulse as a memo quoting it. When it matches the active editor's selection,
+  // the memo also links back to that note.
+  private async captureDrop(raw: string): Promise<void> {
+    const pulse = this.pulseApi();
+    if (!canCapture(pulse)) {
+      this.say("drop", 0, "装上 Crisp Pulse 才能记速记");
+      return;
+    }
+    // app.dragManager is not in the public typings; dragging a note from the file explorer also carries text.
+    const draggable = (this.app as unknown as { dragManager?: { draggable?: { type?: string } | null } }).dragManager?.draggable;
+    if (draggable && draggable.type !== "text") {
+      this.say("drop", 0, "现在只收文字，笔记和文件还不行");
+      return;
+    }
+    const text = normalizeDrop(raw);
+    if (!text) return;
+    if (text.length > MAX_DROP_CHARS) {
+      this.say("drop", 0, `太长了，速记一次最多 ${MAX_DROP_CHARS} 字`);
+      return;
+    }
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const selection = view?.getMode() === "source" ? normalizeDrop(view.editor.getSelection()) : "";
+    const sourcePath = view?.file && selection === text ? view.file.path : null;
+    try {
+      const result = await pulse.captureMemoFromSource(memoRequest(text, sourcePath));
+      const id = result.memo?.id;
+      const reveal = id ? () => void pulse.revealMemo({ id }) : undefined;
+      if (result.status === "created") {
+        this.nudge((mood, now) => mood.trigger("jumping", now));
+        this.say("drop", 0, "记下了，点我看看", reveal);
+      } else {
+        this.say("drop", 0, "这段之前记过了，点我看看", reveal);
+      }
+    } catch (error) {
+      this.nudge((mood, now) => mood.trigger("failed", now));
+      this.say("drop", 0, `没记上：${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private focusSnapshot(): unknown {
     // app.plugins is not in the public typings.
-    const focus = (this.app as unknown as { plugins?: { plugins?: Record<string, unknown> } }).plugins?.plugins?.["crisp-focus"] as
-      | { getPomodoroSnapshot?: () => unknown }
-      | undefined;
+    const focus = this.pluginInstance("crisp-focus") as { getPomodoroSnapshot?: () => unknown } | undefined;
     try {
       return focus?.getPomodoroSnapshot?.();
     } catch {
@@ -232,7 +398,11 @@ export default class CrispPetsPlugin extends Plugin {
     el.addEventListener("pointerdown", (down) => {
       if (down.button !== 0) return;
       down.preventDefault();
-      el.setPointerCapture(down.pointerId);
+      try {
+        el.setPointerCapture(down.pointerId);
+      } catch {
+        // Synthetic or already released pointers cannot be captured; dragging still works without it.
+      }
       const start = { ...this.options.offset };
       let moved = false;
       let lastX = down.clientX;
@@ -255,9 +425,11 @@ export default class CrispPetsPlugin extends Plugin {
         el.removeClass("is-dragging");
         this.nudge((mood) => mood.drag(null));
         if (moved) {
+          this.placeOverlay();
           void this.saveOptions();
         } else {
           this.nudge((mood, now) => mood.trigger("waving", now));
+          this.togglePanel();
         }
       };
       el.addEventListener("pointermove", move);
