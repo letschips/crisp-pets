@@ -1,5 +1,5 @@
 {
-  "name": "crisp-pet",
+  "name": "crisp-pets",
   "version": "0.1.0",
   "description": "Shows a Codex-compatible animated pet in Obsidian.",
   "main": "main.js",

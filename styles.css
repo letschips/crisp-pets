@@ -1,8 +1,8 @@
-/* Crisp Pet — fixed above the workspace, one atlas cell at a time.
+/* Crisp Pets — fixed above the workspace, one atlas cell at a time.
    No will-change / 3D transforms: translucent windows keep stale frames
    for separately composited layers. */
 
-.crisp-pet {
+.crisp-pets {
   position: fixed;
   z-index: var(--layer-status-bar);
   background-repeat: no-repeat;
@@ -11,11 +11,104 @@
   user-select: none;
 }
 
-.crisp-pet.is-dragging {
+.crisp-pets.is-dragging {
   cursor: grabbing;
 }
 
-.crisp-pet-errors {
+/* Settings: pet picker */
+.crisp-pets-heading {
+  padding: 0.75em 0 0.5em;
+}
+
+.crisp-pets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  padding-bottom: 0.75em;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.crisp-pets-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  height: auto;
+  padding: 12px 10px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+  box-shadow: none;
+  text-align: center;
+  white-space: normal;
+  cursor: pointer;
+}
+
+.crisp-pets-card:hover {
+  background: var(--background-modifier-hover);
+}
+
+.crisp-pets-card.is-selected {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+
+.crisp-pets-card:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.crisp-pets-thumb {
+  width: 96px;
+  height: 104px;
+  background-repeat: no-repeat;
+}
+
+.crisp-pets-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+}
+
+.crisp-pets-name {
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+}
+
+.crisp-pets-tag {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: var(--radius-s);
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: normal;
+}
+
+.crisp-pets-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.35;
+}
+
+.crisp-pets-meta {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+.crisp-pets-error,
+.crisp-pets-empty {
   color: var(--text-error);
   font-size: var(--font-ui-smaller);
+}
+
+.crisp-pets-empty {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
 }

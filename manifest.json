@@ -1,6 +1,6 @@
 {
-  "id": "crisp-pet",
-  "name": "Crisp Pet",
+  "id": "crisp-pets",
+  "name": "Crisp Pets",
   "version": "0.1.0",
   "minAppVersion": "1.6.0",
   "description": "Shows a Codex-compatible animated pet that reacts to typing, reading and tasks.",

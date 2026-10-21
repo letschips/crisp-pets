@@ -1,4 +1,4 @@
-# Crisp Pet
+# Crisp Pets
 
 Shows a Codex pet in Obsidian (desktop only). Reads the same files Codex uses: `${CODEX_HOME:-~/.codex}/pets/<pet>/pet.json` + spritesheet. Both v1 (9 rows, 1536x1872) and v2 (11 rows with look directions, 1536x2288) atlases are supported.
 
@@ -16,6 +16,6 @@ Shows a Codex pet in Obsidian (desktop only). Reads the same files Codex uses: `
 | Dragging left / right | running-left / running-right |
 | Pointer moves (v2 only) | 16 look directions |
 
-Settings: show/hide, pets folder (blank = Codex default), pet, size. Commands: show or hide pet, reload pets from disk.
+Settings: show/hide; follow Codex (shows the pet selected in Codex, resolved from `config.toml` `selected-avatar-id` and, for cloud-migrated pets, `.codex-global-state.json`; re-checked when Obsidian regains focus); a card picker with idle previews (hover to animate); size; pets folder (blank = Codex default). Commands: show or hide pet, reload pets from disk.
 
 Development: `npm run check`, then `node scripts/deploy.mjs <vault>`.

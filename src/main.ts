@@ -1,13 +1,15 @@
-import { App, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, TFile } from "obsidian";
+import { MarkdownView, Notice, Plugin, TFile } from "obsidian";
 import { FOCUS_EVENT, focusReaction, focusingFromSnapshot } from "./focus";
 import { PetMood } from "./mood";
-import { PetEntry, defaultPetsFolder, listPets, loadSpritesheet, resolvePetsFolder } from "./pets";
+import { PetEntry, listPets, loadSpritesheet, readCodexSelection, resolvePetsFolder } from "./pets";
+import { PetSettingTab } from "./settings-tab";
 import { PetSprite } from "./sprite";
 
-interface PetSettings {
+export interface PetSettings {
   visible: boolean;
   petsFolder: string;
-  petId: string;
+  followCodex: boolean; // show whichever local pet Codex has selected
+  petId: string; // pet folder name, used when not following Codex or Codex has no local pet selected
   size: number; // percent of the 192x208 cell
   offset: { right: number; bottom: number };
 }
@@ -15,6 +17,7 @@ interface PetSettings {
 const DEFAULT_SETTINGS: PetSettings = {
   visible: true,
   petsFolder: "",
+  followCodex: true,
   petId: "",
   size: 50,
   offset: { right: 24, bottom: 40 },
@@ -23,9 +26,11 @@ const DEFAULT_SETTINGS: PetSettings = {
 const DRAG_THRESHOLD_PX = 4;
 const FAILED_COOLDOWN_MS = 10000;
 
-export default class CrispPetPlugin extends Plugin {
+export default class CrispPetsPlugin extends Plugin {
   options: PetSettings = { ...DEFAULT_SETTINGS };
   pets: PetEntry[] = [];
+  codexSelection: string | null = null;
+  shownPet: string | null = null;
   private el: HTMLElement | null = null;
   private sprite: PetSprite | null = null;
   private sheetUrl: string | null = null;
@@ -65,6 +70,8 @@ export default class CrispPetPlugin extends Plugin {
     this.registerDomEvent(window, "unhandledrejection", () => this.onFailure());
     this.registerDomEvent(document, "pointermove", (event) => this.onPointer(event));
     this.registerDomEvent(window, "resize", () => this.applyPosition());
+    // Codex may switch pets while Obsidian is in the background.
+    this.registerDomEvent(window, "focus", () => void this.followCodexChange());
 
     this.app.workspace.onLayoutReady(() => void this.mount());
   }
@@ -80,16 +87,16 @@ export default class CrispPetPlugin extends Plugin {
   async mount(): Promise<void> {
     const token = ++this.mountToken;
     this.unmount();
-    this.pets = await listPets(resolvePetsFolder(this.options.petsFolder));
+    this.shownPet = null;
+    await this.scanPets();
     if (token !== this.mountToken || !this.options.visible) return;
-    const usable = this.pets.filter((pet) => pet.manifest);
-    const entry = usable.find((pet) => pet.manifest!.id === this.options.petId) ?? usable[0];
+    const entry = this.chosenPet();
     if (!entry?.manifest) return;
     let sheet;
     try {
       sheet = await loadSpritesheet(entry.folder, entry.manifest);
     } catch (error) {
-      new Notice(`Crisp Pet: ${entry.manifest.displayName} 无法加载（${error instanceof Error ? error.message : error}）`);
+      new Notice(`Crisp Pets: ${entry.manifest.displayName} 无法加载（${error instanceof Error ? error.message : error}）`);
       return;
     }
     if (token !== this.mountToken) {
@@ -97,8 +104,9 @@ export default class CrispPetPlugin extends Plugin {
       return;
     }
     this.sheetUrl = sheet.url;
+    this.shownPet = entry.name;
     this.mood = new PetMood(entry.manifest.spriteVersion === 2);
-    this.el = document.body.createDiv({ cls: "crisp-pet", attr: { "aria-label": entry.manifest.displayName } });
+    this.el = document.body.createDiv({ cls: "crisp-pets", attr: { "aria-label": entry.manifest.displayName } });
     this.sprite = new PetSprite(this.el, sheet, () => this.mood!.pose(Date.now()), () => this.reducedMotion.matches);
     this.sprite.setScale(this.options.size / 100);
     this.applyPosition();
@@ -107,6 +115,33 @@ export default class CrispPetPlugin extends Plugin {
     this.mood.setFocusing(focusingFromSnapshot(this.focusSnapshot()));
     this.mood.trigger("waving", Date.now());
     this.sprite.start();
+  }
+
+  // Re-reads the pets folder and the Codex selection without touching the pet on screen.
+  async scanPets(): Promise<void> {
+    this.pets = await listPets(resolvePetsFolder(this.options.petsFolder));
+    this.codexSelection = await readCodexSelection();
+  }
+
+  findPet(key: string | null): PetEntry | undefined {
+    if (!key) return undefined;
+    return this.pets.find((pet) => pet.manifest && (pet.name === key || pet.manifest.id === key));
+  }
+
+  chosenPet(): PetEntry | undefined {
+    return (
+      (this.options.followCodex ? this.findPet(this.codexSelection) : undefined) ??
+      this.findPet(this.options.petId) ??
+      this.pets.find((pet) => pet.manifest)
+    );
+  }
+
+  private async followCodexChange(): Promise<void> {
+    if (!this.options.followCodex || !this.options.visible) return;
+    const selection = await readCodexSelection();
+    if (selection === this.codexSelection) return;
+    this.codexSelection = selection;
+    if (this.chosenPet()?.name !== this.shownPet) await this.mount();
   }
 
   private unmount(): void {
@@ -229,74 +264,5 @@ export default class CrispPetPlugin extends Plugin {
       el.addEventListener("pointerup", up);
       el.addEventListener("pointercancel", up);
     });
-  }
-}
-
-class PetSettingTab extends PluginSettingTab {
-  constructor(app: App, private readonly plugin: CrispPetPlugin) {
-    super(app, plugin);
-  }
-
-  display(): void {
-    const { containerEl } = this;
-    const plugin = this.plugin;
-    containerEl.empty();
-
-    new Setting(containerEl).setName("显示宠物").addToggle((toggle) =>
-      toggle.setValue(plugin.options.visible).onChange(async (value) => {
-        plugin.options.visible = value;
-        await plugin.saveOptions();
-        await plugin.mount();
-      }),
-    );
-
-    new Setting(containerEl)
-      .setName("宠物目录")
-      .setDesc(`留空使用 Codex 默认目录：${defaultPetsFolder()}`)
-      .addText((text) =>
-        text
-          .setPlaceholder(defaultPetsFolder())
-          .setValue(plugin.options.petsFolder)
-          .onChange(async (value) => {
-            plugin.options.petsFolder = value;
-            await plugin.saveOptions();
-          }),
-      )
-      .addButton((button) =>
-        button.setButtonText("重新读取").onClick(async () => {
-          await plugin.mount();
-          this.display();
-        }),
-      );
-
-    const usable = plugin.pets.filter((pet) => pet.manifest);
-    new Setting(containerEl)
-      .setName("宠物")
-      .setDesc(usable.length ? "" : "目录里没有找到可用的宠物。")
-      .addDropdown((dropdown) => {
-        for (const pet of usable) dropdown.addOption(pet.manifest!.id, pet.manifest!.displayName);
-        dropdown.setValue(plugin.options.petId || usable[0]?.manifest?.id || "").onChange(async (value) => {
-          plugin.options.petId = value;
-          await plugin.saveOptions();
-          await plugin.mount();
-        });
-      });
-
-    new Setting(containerEl).setName("大小").addSlider((slider) =>
-      slider
-        .setLimits(25, 100, 5)
-        .setDynamicTooltip()
-        .setValue(plugin.options.size)
-        .onChange(async (value) => {
-          plugin.setSize(value);
-          await plugin.saveOptions();
-        }),
-    );
-
-    const broken = plugin.pets.filter((pet) => pet.error);
-    if (broken.length) {
-      const list = containerEl.createEl("ul", { cls: "crisp-pet-errors" });
-      for (const pet of broken) list.createEl("li", { text: `${pet.folder}：${pet.error}` });
-    }
   }
 }

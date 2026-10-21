@@ -48,6 +48,13 @@ export class PetSprite {
     this.timer = null;
   }
 
+  // Back to the first frame of the current pose, without starting the timer.
+  reset(): void {
+    this.key = "";
+    this.frame = 0;
+    this.paint(this.readPose());
+  }
+
   // Called when input may have changed the pose; switches right away instead of at the next frame.
   refresh(): void {
     if (poseKey(this.readPose()) !== this.key) this.start();

@@ -3,16 +3,35 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { extname, join } from "node:path";
 import { PetManifest, checkAtlasSize, parseManifest } from "./atlas";
+import { needsGlobalState, parseSelectedAvatarId, resolveSelectedPet } from "./codex";
 
 export interface PetEntry {
   folder: string;
+  name: string; // folder name; Codex refers to local pets as "custom:<name>"
   manifest?: PetManifest;
   error?: string;
 }
 
+export function codexHome(): string {
+  return process.env.CODEX_HOME?.trim() || join(homedir(), ".codex");
+}
+
 export function defaultPetsFolder(): string {
-  const codexHome = process.env.CODEX_HOME?.trim();
-  return join(codexHome || join(homedir(), ".codex"), "pets");
+  return join(codexHome(), "pets");
+}
+
+// The local pet folder name Codex currently shows, or null (cloud-only pet, no Codex, unreadable files).
+export async function readCodexSelection(): Promise<string | null> {
+  try {
+    const selected = parseSelectedAvatarId(await readFile(join(codexHome(), "config.toml"), "utf8"));
+    if (!selected) return null;
+    const state = needsGlobalState(selected)
+      ? JSON.parse(await readFile(join(codexHome(), ".codex-global-state.json"), "utf8"))
+      : null;
+    return resolveSelectedPet(selected, state);
+  } catch {
+    return null;
+  }
 }
 
 export function resolvePetsFolder(configured: string): string {
@@ -35,10 +54,10 @@ export async function listPets(root: string): Promise<PetEntry[]> {
     try {
       if (!(await stat(folder)).isDirectory()) continue;
       const raw = JSON.parse(await readFile(join(folder, "pet.json"), "utf8"));
-      entries.push({ folder, manifest: parseManifest(raw, name) });
+      entries.push({ folder, name, manifest: parseManifest(raw, name) });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      entries.push({ folder, error: error instanceof Error ? error.message : String(error) });
+      entries.push({ folder, name, error: error instanceof Error ? error.message : String(error) });
     }
   }
   return entries;

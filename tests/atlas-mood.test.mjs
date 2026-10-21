@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import esbuild from "esbuild";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const outDir = mkdtempSync(path.join(tmpdir(), "crisp-pet-"));
+const outDir = mkdtempSync(path.join(tmpdir(), "crisp-pets-"));
 async function load(name) {
   await esbuild.build({
     entryPoints: [path.join(root, `src/${name}.ts`)],
