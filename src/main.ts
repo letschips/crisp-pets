@@ -636,6 +636,8 @@ export default class CrispPetsPlugin extends Plugin {
         el.removeClass("is-dragging");
         this.nudge((mood) => mood.drag(null));
         if (moved) {
+          // The hover tooltip was placed under the pet's old spot; drop it rather than leave it behind.
+          document.body.querySelectorAll(".tooltip").forEach((tip) => tip.remove());
           this.options.offset = displayedOffset(this.el!.getBoundingClientRect(), window.innerWidth, window.innerHeight);
           this.overlay?.reposition();
           void this.saveOptions();

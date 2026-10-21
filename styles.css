@@ -25,6 +25,11 @@
   cursor: grabbing;
 }
 
+/* Obsidian's hover tooltip stays where it was shown, so it is hidden while the pet moves away from it. */
+body:has(.crisp-pets-sprite.is-dragging) .tooltip {
+  display: none;
+}
+
 /* Text dragged over the pet: a soft ring says it will be caught. */
 .crisp-pets-sprite.is-drop-target {
   border-radius: 50%;

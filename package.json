@@ -1,6 +1,6 @@
 {
   "name": "crisp-pets",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Codex-compatible animated pets for Obsidian, linked with Crisp Focus and Crisp Pulse.",
   "main": "main.js",
   "type": "module",
