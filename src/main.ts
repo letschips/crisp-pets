@@ -1,7 +1,7 @@
 import { MarkdownView, Notice, Plugin, TFile } from "obsidian";
 import { BubbleGate } from "./bubble-gate";
 import { FOCUS_EVENT, focusReaction, focusingFromSnapshot } from "./focus";
-import { MAX_DROP_CHARS, PulseMemoApi, canCapture, memoRequest, normalizeDrop } from "./memo-drop";
+import { MAX_DROP_CHARS, PressedSelection, PulseMemoApi, canCapture, memoRequest, normalizeDrop, resolveDrop } from "./memo-drop";
 import { PetMood } from "./mood";
 import { PetOverlay } from "./overlay";
 import { PULSE_STATE_EVENT, PulseStateApi, PulseToday, canReadToday, parseToday, pulseReactions } from "./pulse";
@@ -52,6 +52,7 @@ export default class CrispPetsPlugin extends Plugin {
   private pulseToday: PulseToday | null = null;
   private pulseTimer: number | null = null;
   private pulseToken = 0;
+  private pressedSelection: PressedSelection | null = null;
   private sheetUrl: string | null = null;
   private mood: PetMood | null = null;
   private doneTasks = new Map<string, number>();
@@ -94,6 +95,8 @@ export default class CrispPetsPlugin extends Plugin {
     this.registerDomEvent(document, "pointerdown", (event) => {
       if (this.overlay?.panelOpen && !this.overlay.contains(event.target)) this.overlay.closePanel();
     });
+    // Remember the editor selection a drag starts from; see resolveDrop.
+    this.registerDomEvent(document, "pointerdown", (event) => this.rememberSelection(event), { capture: true });
     this.registerDomEvent(document, "keydown", (event) => {
       if (event.key === "Escape" && this.overlay?.panelOpen) this.overlay.closePanel();
     });
@@ -392,11 +395,14 @@ export default class CrispPetsPlugin extends Plugin {
       this.say("drop", 0, `太长了，速记一次最多 ${MAX_DROP_CHARS} 字`);
       return;
     }
-    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-    const selection = view?.getMode() === "source" ? normalizeDrop(view.editor.getSelection()) : "";
-    const sourcePath = view?.file && selection === text ? view.file.path : null;
+    const drop = resolveDrop(text, this.pressedSelection, Date.now());
+    this.pressedSelection = null;
+    if (drop.text.length > MAX_DROP_CHARS) {
+      this.say("drop", 0, `太长了，速记一次最多 ${MAX_DROP_CHARS} 字`);
+      return;
+    }
     try {
-      const result = await pulse.captureMemoFromSource(memoRequest(text, sourcePath));
+      const result = await pulse.captureMemoFromSource(memoRequest(drop.text, drop.sourcePath));
       const id = result.memo?.id;
       const reveal = id ? () => void pulse.revealMemo({ id }) : undefined;
       if (result.status === "created") {
@@ -409,6 +415,22 @@ export default class CrispPetsPlugin extends Plugin {
       this.nudge((mood, now) => mood.trigger("failed", now));
       this.say("drop", 0, `没记上：${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  private rememberSelection(event: PointerEvent): void {
+    if (!(event.target instanceof Element) || !event.target.closest(".cm-content")) return;
+    this.pressedSelection = null;
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!view) return;
+    // Only a press on the selected text itself can start dragging it. editor.cm is CodeMirror's EditorView,
+    // not in the public typings.
+    const cm = (view.editor as unknown as { cm?: { posAtCoords(p: { x: number; y: number }): number | null } }).cm;
+    const pos = cm?.posAtCoords({ x: event.clientX, y: event.clientY });
+    const from = view.editor.posToOffset(view.editor.getCursor("from"));
+    const to = view.editor.posToOffset(view.editor.getCursor("to"));
+    if (pos === null || pos === undefined || pos < from || pos > to || from === to) return;
+    const text = normalizeDrop(view.editor.getSelection());
+    if (text) this.pressedSelection = { text, path: view.file?.path ?? null, at: Date.now() };
   }
 
   private focusSnapshot(): unknown {

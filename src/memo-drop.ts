@@ -47,3 +47,26 @@ export function canCapture(pulse: PulseMemoApi | undefined): pulse is Required<P
     Number(pulse.memoCaptureApiVersion) >= MEMO_API_VERSION
   );
 }
+
+// The selection under the mouse when a drag began in an editor.
+export interface PressedSelection {
+  text: string;
+  path: string | null;
+  at: number;
+}
+
+export const PRESS_TTL_MS = 60000;
+
+// Obsidian's editor collapses the selection to the character under the mouse before the drag starts,
+// so only that character arrives. When the dropped text is part of the selection that was pressed on,
+// the whole selection is meant, and it came from that note.
+export function resolveDrop(
+  dropped: string,
+  pressed: PressedSelection | null,
+  now: number,
+): { text: string; sourcePath: string | null } {
+  if (pressed && now - pressed.at <= PRESS_TTL_MS && dropped && pressed.text.includes(dropped)) {
+    return { text: pressed.text, sourcePath: pressed.path };
+  }
+  return { text: dropped, sourcePath: null };
+}
