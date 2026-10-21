@@ -1,4 +1,5 @@
 import { App, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, TFile } from "obsidian";
+import { FOCUS_EVENT, focusReaction, focusingFromSnapshot } from "./focus";
 import { PetMood } from "./mood";
 import { PetEntry, defaultPetsFolder, listPets, loadSpritesheet, resolvePetsFolder } from "./pets";
 import { PetSprite } from "./sprite";
@@ -59,6 +60,7 @@ export default class CrispPetPlugin extends Plugin {
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.syncReading()));
     this.registerEvent(this.app.workspace.on("layout-change", () => this.syncReading()));
     this.registerEvent(this.app.metadataCache.on("changed", (file, _data, cache) => this.checkTasks(file, cache.listItems)));
+    this.registerEvent(this.app.workspace.on(FOCUS_EVENT as "quit", (event: unknown) => this.onFocusEvent(event)));
     this.registerDomEvent(window, "error", () => this.onFailure());
     this.registerDomEvent(window, "unhandledrejection", () => this.onFailure());
     this.registerDomEvent(document, "pointermove", (event) => this.onPointer(event));
@@ -102,6 +104,7 @@ export default class CrispPetPlugin extends Plugin {
     this.applyPosition();
     this.attachDrag(this.el);
     this.syncReading();
+    this.mood.setFocusing(focusingFromSnapshot(this.focusSnapshot()));
     this.mood.trigger("waving", Date.now());
     this.sprite.start();
   }
@@ -141,6 +144,27 @@ export default class CrispPetPlugin extends Plugin {
     this.doneTasks.set(file.path, done);
     if (previous !== undefined && done > previous && this.app.workspace.getActiveFile()?.path === file.path) {
       this.nudge((mood, now) => mood.trigger("jumping", now));
+    }
+  }
+
+  private onFocusEvent(event: unknown): void {
+    const reaction = focusReaction(event);
+    if (!reaction) return;
+    this.nudge((mood, now) => {
+      mood.setFocusing(reaction.focusing);
+      if (reaction.jump) mood.trigger("jumping", now);
+    });
+  }
+
+  private focusSnapshot(): unknown {
+    // app.plugins is not in the public typings.
+    const focus = (this.app as unknown as { plugins?: { plugins?: Record<string, unknown> } }).plugins?.plugins?.["crisp-focus"] as
+      | { getPomodoroSnapshot?: () => unknown }
+      | undefined;
+    try {
+      return focus?.getPomodoroSnapshot?.();
+    } catch {
+      return null;
     }
   }
 

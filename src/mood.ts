@@ -18,6 +18,7 @@ export function animationLength(state: PetState): number {
 export class PetMood {
   private lastTyped = -Infinity;
   private reading = false;
+  private focusing = false;
   private oneShot: { state: OneShot; until: number } | null = null;
   private dragDirection: "left" | "right" | null = null;
   private pointer: { dx: number; dy: number; at: number } | null = null;
@@ -30,6 +31,11 @@ export class PetMood {
 
   setReading(reading: boolean): void {
     this.reading = reading;
+  }
+
+  // A running Crisp Focus session keeps the pet working until it pauses, stops or completes.
+  setFocusing(focusing: boolean): void {
+    this.focusing = focusing;
   }
 
   // Plays a whole row once. A lower-priority reaction never cuts off a higher one still playing.
@@ -51,7 +57,7 @@ export class PetMood {
     if (this.dragDirection) return { kind: "animation", state: `running-${this.dragDirection}` };
     if (this.oneShot && this.oneShot.until > now) return { kind: "animation", state: this.oneShot.state };
     this.oneShot = null;
-    if (now - this.lastTyped < TYPING_HOLD_MS) return { kind: "animation", state: "running" };
+    if (this.focusing || now - this.lastTyped < TYPING_HOLD_MS) return { kind: "animation", state: "running" };
     if (now - this.lastTyped < TYPING_HOLD_MS + WAITING_HOLD_MS) return { kind: "animation", state: "waiting" };
     if (this.reading) return { kind: "animation", state: "review" };
     if (this.canLook && this.pointer && now - this.pointer.at < LOOK_HOLD_MS) {

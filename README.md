@@ -6,6 +6,8 @@ Shows a Codex pet in Obsidian (desktop only). Reads the same files Codex uses: `
 | --- | --- |
 | No activity | idle |
 | Typing in an editor | running |
+| Crisp Focus session running (not breaks) | running until pause / stop / skip |
+| Crisp Focus session completed | jumping |
 | A few seconds after typing | waiting |
 | Reading view | review |
 | Plugin loads / click the pet | waving |
