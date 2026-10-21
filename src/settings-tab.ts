@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type CrispPetsPlugin from "./main";
 import { homedir } from "node:os";
 import { PetEntry, defaultPetsFolder, loadSpritesheet, resolvePetsFolder } from "./pets";
@@ -15,6 +15,8 @@ function tildify(path: string): string {
 export class PetSettingTab extends PluginSettingTab {
   private previews: { sprite: PetSprite; url: string }[] = [];
   private renderToken = 0;
+  private licenseDraft = "";
+  private checking = false;
 
   constructor(app: App, private readonly plugin: CrispPetsPlugin) {
     super(app, plugin);
@@ -41,6 +43,8 @@ export class PetSettingTab extends PluginSettingTab {
     const plugin = this.plugin;
     containerEl.empty();
 
+    this.renderLicense(containerEl);
+    new Setting(containerEl).setName("宠物").setHeading();
     new Setting(containerEl).setName("显示宠物").addToggle((toggle) =>
       toggle.setValue(plugin.options.visible).onChange(async (value) => {
         plugin.options.visible = value;
@@ -116,6 +120,84 @@ export class PetSettingTab extends PluginSettingTab {
       );
 
     this.renderAbout(containerEl);
+  }
+
+  private renderLicense(containerEl: HTMLElement): void {
+    new Setting(containerEl).setName("软件授权与激活").setHeading();
+    const plugin = this.plugin;
+    const license = plugin.license;
+    const status = new Setting(containerEl).setName("激活状态");
+    if (plugin.licensed) {
+      const payload = license.payload;
+      const user = payload?.userName || "Crisp 用户";
+      const expiry = payload?.expiresAt ? `到期时间：${String(payload.expiresAt).split("T")[0]}` : "永久授权";
+      status.setDesc(`已激活（授权用户：${user} · ${expiry}）`);
+      status.addButton((button) =>
+        button
+          .setButtonText("清除授权")
+          .setWarning()
+          .onClick(async () => {
+            const saved = await plugin.clearLicense();
+            this.licenseDraft = "";
+            new Notice(
+              saved ? "已清除授权信息" : "本次运行已清除授权，但没能写入设置文件：重启后授权会恢复。",
+              saved ? undefined : 0,
+            );
+            this.display();
+          }),
+      );
+      return;
+    }
+    status.setDesc(
+      license.reason
+        ? `未激活：${license.reason}`
+        : "未激活。宠物显示、选宠物和基础动作可以直接使用；点宠物打开面板、拖文字记速记、Focus 与 Pulse 联动需要激活。",
+    );
+    new Setting(containerEl)
+      .setName("授权码")
+      .setDesc("支持 Crisp Suite 全家桶或单款授权码。启动时会自动继承库内其他 Crisp 插件的授权。")
+      .addText((text) => {
+        text.inputEl.type = "password";
+        text
+          .setPlaceholder("粘贴 Crisp 授权码…")
+          .setValue(this.licenseDraft)
+          .onChange((value) => {
+            this.licenseDraft = value.trim();
+          });
+      })
+      .addButton((button) =>
+        button
+          .setButtonText(this.checking ? "验证中…" : "激活")
+          .setCta()
+          .setDisabled(this.checking)
+          .onClick(async () => {
+            const code = this.licenseDraft || plugin.options.licenseCode;
+            if (!code) {
+              new Notice("请先输入授权码");
+              return;
+            }
+            this.checking = true;
+            this.display();
+            try {
+              const { result, applied, saved } = await plugin.activate(code);
+              if (!applied) return;
+              if (!result.valid) {
+                new Notice(`激活未通过：${result.reason || "未知原因"}`);
+                return;
+              }
+              this.licenseDraft = "";
+              new Notice(
+                saved
+                  ? `Crisp Pets 激活成功，欢迎使用，${result.payload?.userName || "Crisp 用户"}`
+                  : "授权验证通过，但没能写入设置文件：本次可以使用，重启后需要重新激活。",
+                saved ? 4000 : 0,
+              );
+            } finally {
+              this.checking = false;
+              this.display();
+            }
+          }),
+      );
   }
 
   private renderAbout(containerEl: HTMLElement): void {

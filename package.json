@@ -1,7 +1,7 @@
 {
   "name": "crisp-pets",
   "version": "0.1.0",
-  "description": "Shows a Codex-compatible animated pet in Obsidian.",
+  "description": "Codex-compatible animated pets for Obsidian, linked with Crisp Focus and Crisp Pulse.",
   "main": "main.js",
   "type": "module",
   "scripts": {
@@ -12,8 +12,7 @@
     "check": "npm run build && npm test"
   },
   "author": "letschips",
-  "license": "UNLICENSED",
-  "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "devDependencies": {
     "@types/node": "^26.6.5",
     "builtin-modules": "^5.4.0",

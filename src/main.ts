@@ -1,6 +1,8 @@
 import { MarkdownView, Notice, Plugin, TFile } from "obsidian";
 import { BubbleGate } from "./bubble-gate";
 import { FOCUS_EVENT, focusReaction, focusingFromSnapshot } from "./focus";
+import { discoverVaultCrispLicenses, verifyLicenseCode } from "./license";
+import { ActivationOutcome, LicenseController, LicenseResult } from "./license-controller";
 import { DragSession, MAX_DROP_CHARS, PulseMemoApi, canCapture, memoRequest, normalizeDrop } from "./memo-drop";
 import { displayedOffset } from "./layout";
 import { PetMood } from "./mood";
@@ -19,6 +21,7 @@ const PULSE_DEBOUNCE_MS = 800;
 const PULSE_POLL_MS = 10 * 60000; // catches the evening without any Pulse event
 const DAY_LINE_COOLDOWN_MS = 6 * 3600000;
 const DROP_HINT = "把文字拖给我，记成一条速记";
+const PLUGIN_ID = "crisp-pets";
 
 export default class CrispPetsPlugin extends Plugin {
   options: PetSettings = { ...DEFAULT_SETTINGS };
@@ -42,10 +45,36 @@ export default class CrispPetsPlugin extends Plugin {
   private lastFailed = -Infinity;
   private reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   private mountToken = 0;
+  private settingTab: PetSettingTab | null = null;
+  // Free: the pet itself (look, typing, reading, dragging, task jumps). Licensed: the panel, dropping text
+  // into Pulse memos, Focus and Pulse linkage and their bubbles.
+  private readonly licenseController = new LicenseController({
+    verify: (code, online) => this.checkLicense(code, online),
+    discover: () => discoverVaultCrispLicenses(this.app, PLUGIN_ID),
+    getCode: () => this.options.licenseCode,
+    persistCode: async (code) => {
+      this.options.licenseCode = code;
+      return this.saveOptionsChecked();
+    },
+    onChange: () => this.onLicenseChange(),
+  });
+
+  get license(): LicenseResult {
+    return this.licenseController.state;
+  }
+
+  // Also applies the expiry date at the moment of use.
+  get licensed(): boolean {
+    return this.licenseController.licensed;
+  }
 
   async onload(): Promise<void> {
     this.options = sanitizeSettings(await this.loadData());
-    this.addSettingTab(new PetSettingTab(this.app, this));
+    // Startup stays local: only the embedded-key signature check; the online check runs once the layout is ready.
+    await this.licenseController.loadLocal();
+    this.registerInterval(window.setInterval(() => this.licenseController.checkExpiry(), 60_000));
+    this.settingTab = new PetSettingTab(this.app, this);
+    this.addSettingTab(this.settingTab);
 
     this.addCommand({
       id: "toggle-pet",
@@ -106,14 +135,19 @@ export default class CrispPetsPlugin extends Plugin {
     this.registerInterval(window.setInterval(() => void this.refreshPulse(), PULSE_POLL_MS));
 
     this.app.workspace.onLayoutReady(() => {
+      if (this.disposed) return;
       this.seedTasks();
       void this.mount();
+      void this.licenseController.refreshInBackground().catch((error) => {
+        console.debug("Crisp Pets background license check failed", error);
+      });
     });
   }
 
   onunload(): void {
     // Anything still loading (pets folder, spritesheet, Pulse) must not come back after this.
     this.disposed = true;
+    this.licenseController.dispose();
     this.mountToken++;
     this.pulseToken++;
     if (this.pulseTimer !== null) window.clearTimeout(this.pulseTimer);
@@ -121,7 +155,55 @@ export default class CrispPetsPlugin extends Plugin {
   }
 
   async saveOptions(): Promise<void> {
+    if (this.disposed) return;
     await this.saveData(this.options);
+  }
+
+  // The licence code must really be on disk: read it back instead of trusting saveData.
+  private async saveOptionsChecked(): Promise<boolean> {
+    try {
+      await this.saveOptions();
+      const stored = (await this.loadData()) as { licenseCode?: unknown } | null;
+      return stored?.licenseCode === this.options.licenseCode;
+    } catch {
+      return false;
+    }
+  }
+
+  activate(code: string): Promise<ActivationOutcome> {
+    return this.licenseController.activate(code);
+  }
+
+  clearLicense(): Promise<boolean> {
+    return this.licenseController.clear();
+  }
+
+  private async checkLicense(code: string, online: boolean): Promise<LicenseResult> {
+    const result = await verifyLicenseCode(code, PLUGIN_ID, online ? undefined : { online: false });
+    return { valid: result.valid, payload: result.payload, reason: result.reason };
+  }
+
+  private onLicenseChange(): void {
+    if (this.disposed) return;
+    if (!this.licensed) {
+      this.overlay?.closePanel();
+      this.pulseToday = null;
+    }
+    this.nudge((mood) => mood.setFocusing(this.licensed && focusingFromSnapshot(this.focusSnapshot())));
+    void this.refreshPulse();
+    this.settingTab?.display();
+  }
+
+  openSettings(): void {
+    // app.setting is not in the public typings.
+    const setting = (this.app as unknown as { setting?: { open(): void; openTabById(id: string): void } }).setting;
+    setting?.open();
+    setting?.openTabById(PLUGIN_ID);
+  }
+
+  // Unlicensed: the pet still waves, and says once where to activate.
+  private lockedHint(text: string): void {
+    this.say("locked", 0, text, () => this.openSettings());
   }
 
   // Loads the chosen pet first and swaps it in only when it is ready, so a broken spritesheet keeps the
@@ -173,7 +255,7 @@ export default class CrispPetsPlugin extends Plugin {
       this.togglePanel(true);
     });
     this.syncReading();
-    this.mood.setFocusing(focusingFromSnapshot(this.focusSnapshot()));
+    this.mood.setFocusing(this.licensed && focusingFromSnapshot(this.focusSnapshot()));
     this.mood.trigger("waving", Date.now());
     this.sprite.start();
     void this.refreshPulse();
@@ -255,6 +337,7 @@ export default class CrispPetsPlugin extends Plugin {
   }
 
   private onFocusEvent(event: unknown): void {
+    if (!this.licensed) return;
     const reaction = focusReaction(event);
     if (reaction) {
       this.nudge((mood, now) => {
@@ -314,7 +397,7 @@ export default class CrispPetsPlugin extends Plugin {
     const token = ++this.pulseToken;
     const pulse = this.pluginInstance("crisp-pulse") as PulseStateApi | undefined;
     let next: PulseToday | null = null;
-    if (canReadToday(pulse)) {
+    if (this.licensed && canReadToday(pulse)) {
       try {
         next = parseToday(await pulse.getTodaySnapshot());
       } catch {
@@ -360,6 +443,10 @@ export default class CrispPetsPlugin extends Plugin {
   // From the keyboard, focus moves into the panel; Escape brings it back to the pet.
   private togglePanel(fromKeyboard = false): void {
     if (!this.overlay) return;
+    if (!this.licensed) {
+      this.lockedHint("激活 Crisp 后，点我能打开面板");
+      return;
+    }
     if (this.overlay.panelOpen) {
       this.overlay.closePanel();
       if (fromKeyboard) this.spriteEl?.focus();
@@ -409,6 +496,11 @@ export default class CrispPetsPlugin extends Plugin {
   // Dropped text goes to Pulse as a memo quoting it. When it matches the active editor's selection,
   // the memo also links back to that note.
   private async captureDrop(raw: string): Promise<void> {
+    if (!this.licensed) {
+      this.dragSession.end();
+      this.lockedHint("激活 Crisp 后，可以把文字拖给我记速记");
+      return;
+    }
     const pulse = this.pulseApi();
     if (!canCapture(pulse)) {
       this.say("drop", 0, "装上 Crisp Pulse 才能记速记");

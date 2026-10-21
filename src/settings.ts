@@ -6,6 +6,7 @@ export interface PetSettings {
   size: number; // percent of the 192x208 cell
   offset: { right: number; bottom: number };
   memoNudgedOn: string; // date the evening "memos without a destination" line was last shown
+  licenseCode: string;
 }
 
 export const DEFAULT_SETTINGS: PetSettings = {
@@ -16,6 +17,7 @@ export const DEFAULT_SETTINGS: PetSettings = {
   size: 50,
   offset: { right: 24, bottom: 40 },
   memoNudgedOn: "",
+  licenseCode: "",
 };
 
 export const SIZE_MIN = 25;
@@ -39,5 +41,6 @@ export function sanitizeSettings(raw: unknown): PetSettings {
       bottom: Math.max(0, num(offset.bottom, DEFAULT_SETTINGS.offset.bottom)),
     },
     memoNudgedOn: str("memoNudgedOn"),
+    licenseCode: str("licenseCode"),
   };
 }

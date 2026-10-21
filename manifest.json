@@ -3,7 +3,7 @@
   "name": "Crisp Pets",
   "version": "0.1.0",
   "minAppVersion": "1.6.0",
-  "description": "Shows a Codex-compatible animated pet that reacts to typing, reading and tasks.",
+  "description": "Shows a Codex pet in Obsidian that reacts to your writing, focus sessions and Crisp Pulse.",
   "author": "letschips",
   "authorUrl": "https://github.com/letschips",
   "isDesktopOnly": true
