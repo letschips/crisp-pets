@@ -112,3 +112,46 @@
   grid-column: 1 / -1;
   color: var(--text-muted);
 }
+
+/* Settings: about card, same as the other Crisp plugins */
+.crisp-pets-about {
+  margin-top: 1.5rem;
+  padding: 1rem 1.15rem;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+}
+
+.crisp-pets-about__title,
+.crisp-pets-about__description,
+.crisp-pets-about__author {
+  margin: 0;
+}
+
+.crisp-pets-about__title {
+  color: var(--text-normal);
+  font-size: 0.96rem;
+  font-weight: 650;
+}
+
+.crisp-pets-about__description {
+  margin-top: 0.38rem;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.crisp-pets-about__author {
+  margin-top: 0.72rem;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+.crisp-pets-about__author-link {
+  color: var(--text-accent);
+  font-weight: 550;
+  text-decoration: none;
+}
+
+.crisp-pets-about__author-link:hover {
+  text-decoration: underline;
+}

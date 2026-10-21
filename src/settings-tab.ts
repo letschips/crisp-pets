@@ -5,6 +5,7 @@ import { PetEntry, defaultPetsFolder, loadSpritesheet, resolvePetsFolder } from 
 import { PetSprite } from "./sprite";
 
 const THUMB_SCALE = 0.5;
+const AUTHOR_URL = "https://xhslink.cn/m/3MwtKu4822b";
 
 function tildify(path: string): string {
   const home = homedir();
@@ -113,6 +114,22 @@ export class PetSettingTab extends PluginSettingTab {
           this.display();
         }),
       );
+
+    this.renderAbout(containerEl);
+  }
+
+  private renderAbout(containerEl: HTMLElement): void {
+    const card = containerEl.createDiv({ cls: "crisp-pets-about" });
+    card.createDiv({ cls: "crisp-pets-about__title", text: `关于 Crisp Pets ${this.plugin.manifest.version}` });
+    card.createDiv({
+      cls: "crisp-pets-about__description",
+      text: "把 Codex 的宠物带进 Obsidian，跟着你打字、阅读、专注和完成任务做出反应。",
+    });
+    const byline = card.createEl("p", { cls: "crisp-pets-about__author" });
+    byline.createSpan({ text: "作者：" });
+    const link = byline.createEl("a", { cls: "crisp-pets-about__author-link", text: "小红书 letschips", href: AUTHOR_URL });
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
   }
 
   private renderCard(grid: HTMLElement, pet: PetEntry, selected: boolean, isCodex: boolean, token: number): void {
