@@ -25,7 +25,7 @@ async function load(name) {
   return import(pathToFileURL(path.join(outDir, `${name}.mjs`)).href);
 }
 const { DragSession } = await load("memo-drop");
-const { overlayBelow, displayedOffset } = await load("layout");
+const { overlayBelow, overlayRoom, displayedOffset } = await load("layout");
 const { sanitizeSettings } = await load("settings");
 
 const sel = { text: "这是旧笔记的完整选区，包含测试文字。", path: "Old.md" };
@@ -77,6 +77,18 @@ test("the panel opens below when there is not enough room above", () => {
   // Neither side fits: use the larger one.
   assert.equal(overlayBelow({ top: 300, bottom: 425 }, 400, 600), false);
   assert.equal(overlayBelow({ top: 100, bottom: 225 }, 400, 600), true);
+});
+
+// Round 2: in a short window neither side fits, so the panel must be capped to the side it opens on and scroll.
+test("the panel is capped to the room on the side it opens toward", () => {
+  // 494 x 414 viewport from the audit: pet 150..275, panel 282 tall.
+  const pet = { top: 150, bottom: 275 };
+  const below = overlayBelow(pet, 282, 414);
+  assert.equal(below, false);
+  const room = overlayRoom(pet, below, 414);
+  assert.ok(room < 282 && pet.top - 8 - room >= 0, "the capped panel stays inside the top edge");
+  assert.ok(overlayRoom(pet, true, 414) <= 414 - pet.bottom - 8);
+  assert.equal(overlayRoom({ top: 2, bottom: 410 }, false, 414), 0, "no negative room");
 });
 
 test("a drag starts from the shown position, not a saved one outside the window", () => {

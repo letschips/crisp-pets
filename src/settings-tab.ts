@@ -170,6 +170,18 @@ export class PetSettingTab extends PluginSettingTab {
       const user = payload?.userName || "Crisp 用户";
       const expiry = payload?.expiresAt ? `到期时间：${String(payload.expiresAt).split("T")[0]}` : "永久授权";
       status.setDesc(`已激活（授权用户：${user} · ${expiry}）`);
+      if (plugin.licenseUnsaved) {
+        new Setting(containerEl)
+          .setName("授权码未保存")
+          .setDesc("授权码没能写入设置文件：本次可以使用，重启后需要重新激活。")
+          .addButton((button) =>
+            button.setButtonText("重试保存").onClick(async () => {
+              const saved = await plugin.retrySaveLicense();
+              new Notice(saved ? "授权码已保存" : "仍然没能写入设置文件", saved ? undefined : 0);
+              this.display();
+            }),
+          );
+      }
       status.addButton((button) =>
         button
           .setButtonText("清除授权")

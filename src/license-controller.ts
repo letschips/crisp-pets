@@ -41,6 +41,8 @@ function expiryTime(payload?: LicensePayloadLike): number | null {
 
 export class LicenseController {
   state: LicenseResult = { valid: false };
+  /** A valid code that works for this run but could not be written to data.json. */
+  private unsavedCode: string | null = null;
   private sequence = 0;
   private disposed = false;
 
@@ -87,8 +89,9 @@ export class LicenseController {
       const result = await this.deps.verify(candidate, true);
       if (this.stale(sequence)) return;
       if (!result.valid) continue;
-      await this.deps.persistCode(candidate);
+      const saved = await this.deps.persistCode(candidate);
       if (this.stale(sequence)) return;
+      this.unsavedCode = saved ? null : candidate;
       this.set(result);
       return;
     }
@@ -102,12 +105,30 @@ export class LicenseController {
     if (!result.valid) return { result, applied: true, saved: false };
     const saved = await this.deps.persistCode(trimmed);
     if (this.stale(sequence)) return { result, applied: false, saved };
+    this.unsavedCode = saved ? null : trimmed;
     this.set(result);
     return { result, applied: true, saved };
   }
 
+  get unsaved(): boolean {
+    return this.unsavedCode !== null;
+  }
+
+  /** Writes the unsaved code again; true when it is now in data.json. */
+  async retrySave(): Promise<boolean> {
+    const code = this.unsavedCode;
+    if (code === null) return true;
+    const saved = await this.deps.persistCode(code);
+    if (saved && this.unsavedCode === code) {
+      this.unsavedCode = null;
+      this.deps.onChange();
+    }
+    return saved;
+  }
+
   async clear(): Promise<boolean> {
     ++this.sequence;
+    this.unsavedCode = null;
     this.set({ valid: false });
     return this.deps.persistCode("");
   }

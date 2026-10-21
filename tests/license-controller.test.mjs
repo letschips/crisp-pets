@@ -204,3 +204,27 @@ test("clearing the licence while siblings are being checked one by one stops the
   assert.equal(h.stored, "");
   assert.ok(!h.calls.some((c) => c.code === "B"), "no further candidates after the user acted");
 });
+
+// Round 2: an inherited code that could not be written works for this run, but the unsaved state is visible
+// and a retry clears it.
+test("an inherited code that fails to save is flagged and can be saved again", async () => {
+  const h = host({ answers: { A: { online: OK() } }, discover: async () => ["A"], persistOk: false });
+  await h.controller.refreshInBackground();
+  assert.equal(h.controller.licensed, true);
+  assert.equal(h.controller.unsaved, true);
+  assert.equal(await h.controller.retrySave(), false);
+  assert.equal(h.controller.unsaved, true);
+  h.controller.deps.persistCode = async (code) => ((h.stored = code), true);
+  assert.equal(await h.controller.retrySave(), true);
+  assert.equal(h.controller.unsaved, false);
+  assert.equal(h.stored, "A");
+});
+
+test("a manual activation that fails to save shares the unsaved flag; clearing resets it", async () => {
+  const h = host({ answers: { B: { online: OK() } }, persistOk: false });
+  const outcome = await h.controller.activate("B");
+  assert.equal(outcome.saved, false);
+  assert.equal(h.controller.unsaved, true);
+  await h.controller.clear();
+  assert.equal(h.controller.unsaved, false);
+});

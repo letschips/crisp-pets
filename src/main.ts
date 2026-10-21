@@ -27,6 +27,8 @@ export default class CrispPetsPlugin extends Plugin {
   options: PetSettings = { ...DEFAULT_SETTINGS };
   pets: PetEntry[] = [];
   codexSelection: string | null = null;
+  // The Codex selection last brought to screen; undefined until the first check, so that one rescans.
+  private followedSelection: string | null | undefined = undefined;
   shownPet: string | null = null;
   private el: HTMLElement | null = null; // fixed container: sprite + bubble + panel
   private spriteEl: HTMLElement | null = null;
@@ -174,6 +176,14 @@ export default class CrispPetsPlugin extends Plugin {
     return this.licenseController.activate(code);
   }
 
+  get licenseUnsaved(): boolean {
+    return this.licenseController.unsaved;
+  }
+
+  retrySaveLicense(): Promise<boolean> {
+    return this.licenseController.retrySave();
+  }
+
   clearLicense(): Promise<boolean> {
     return this.licenseController.clear();
   }
@@ -283,9 +293,12 @@ export default class CrispPetsPlugin extends Plugin {
   private async followCodexChange(): Promise<void> {
     if (!this.options.followCodex || !this.options.visible) return;
     const selection = await readCodexSelection();
-    if (selection === this.codexSelection) return;
-    this.codexSelection = selection;
+    if (selection === this.followedSelection) return;
+    // A pet created in Codex after the last scan is not in the cached list yet, so rescan before choosing.
+    await this.scanPets();
     if (this.chosenPet()?.name !== this.shownPet) await this.mount();
+    // Only settled once the selection is on screen (or there is none); a pet still downloading is retried next time.
+    if (!selection || this.findPet(selection)?.name === this.shownPet) this.followedSelection = selection;
   }
 
   // A note's existing completed tasks are its baseline, so the first new tick in it already counts.

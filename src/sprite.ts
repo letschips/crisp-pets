@@ -38,8 +38,10 @@ export class PetSprite {
     this.paint(this.readPose());
   }
 
+  // Never runs while the window is hidden; the pose is still read on return, when start() is called again.
   start(): void {
     this.stop();
+    if (this.el.ownerDocument.hidden) return;
     this.step();
   }
 

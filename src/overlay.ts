@@ -2,7 +2,7 @@
 // so they move with it; they open toward the middle of the window.
 import { setIcon } from "obsidian";
 import { bubbleDuration } from "./bubble-gate";
-import { overlayBelow } from "./layout";
+import { overlayBelow, overlayRoom } from "./layout";
 import { FocusCard, PanelAction, PanelModel } from "./panel-model";
 
 export class PetOverlay {
@@ -24,12 +24,17 @@ export class PetOverlay {
   }
 
   // Opens toward the middle of the window horizontally, and below the pet when it does not fit above.
+  // The panel is capped to the room on that side, so in a short window it scrolls instead of leaving the screen.
   reposition(): void {
     const win = this.root.win ?? window;
     const pet = this.root.getBoundingClientRect();
     this.root.toggleClass("is-left", pet.left + pet.width / 2 < win.innerWidth / 2);
     const shown = this.panelOpen ? this.panelEl : this.bubbleEl.isShown() ? this.bubbleEl : null;
-    if (shown) this.root.toggleClass("is-below", overlayBelow(pet, shown.offsetHeight, win.innerHeight));
+    if (!shown) return;
+    if (shown === this.panelEl) this.panelEl.style.maxHeight = "";
+    const below = overlayBelow(pet, shown.offsetHeight, win.innerHeight);
+    this.root.toggleClass("is-below", below);
+    if (shown === this.panelEl) this.panelEl.style.maxHeight = `${overlayRoom(pet, below, win.innerHeight)}px`;
   }
 
   say(text: string, onClick?: () => void): void {
