@@ -2,18 +2,15 @@
 // so they move with it; they open toward the middle of the window.
 import { setIcon } from "obsidian";
 import { bubbleDuration } from "./bubble-gate";
-import { PanelSection } from "./panel-model";
-
-export interface PanelContent {
-  name: string;
-  sections: PanelSection[];
-  hint: string;
-}
+import { FocusCard, PanelAction, PanelModel } from "./panel-model";
 
 export class PetOverlay {
   private bubbleEl: HTMLElement;
   private panelEl: HTMLElement;
   private bubbleTimer: number | null = null;
+  private panelKey = "";
+  private liveTime: HTMLElement | null = null;
+  private liveBar: HTMLElement | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -57,15 +54,23 @@ export class PetOverlay {
     return this.panelEl.isShown();
   }
 
-  openPanel(content: PanelContent): void {
+  openPanel(model: PanelModel): void {
     this.hideBubble();
-    this.renderPanel(content);
+    this.panelKey = "";
+    this.renderPanel(model);
     this.panelEl.show();
   }
 
-  // Re-renders in place while open (the focus countdown changes every minute).
-  refreshPanel(content: PanelContent): void {
-    if (this.panelOpen) this.renderPanel(content);
+  // While open: the countdown and progress bar are patched in place; anything else re-renders,
+  // so hover and focus on the buttons survive the once-a-second tick.
+  refreshPanel(model: PanelModel): void {
+    if (!this.panelOpen) return;
+    if (structureKey(model) !== this.panelKey) {
+      this.renderPanel(model);
+      return;
+    }
+    if (this.liveTime && model.focus?.time) this.liveTime.setText(model.focus.time);
+    if (this.liveBar && model.focus?.progress !== undefined) this.liveBar.style.width = `${model.focus.progress * 100}%`;
   }
 
   closePanel(): void {
@@ -80,30 +85,91 @@ export class PetOverlay {
     this.hideBubble();
   }
 
-  private renderPanel(content: PanelContent): void {
+  private renderPanel(model: PanelModel): void {
     const panel = this.panelEl;
     panel.empty();
-    panel.createDiv({ cls: "crisp-pets-panel__name", text: content.name });
-    for (const section of content.sections) {
-      const block = panel.createDiv({ cls: "crisp-pets-panel__section" });
-      const head = block.createDiv({ cls: "crisp-pets-panel__head" });
-      head.createSpan({ cls: "crisp-pets-panel__title", text: section.title });
-      if (section.status) head.createSpan({ cls: "crisp-pets-panel__status", text: section.status });
-      if (section.task) block.createDiv({ cls: "crisp-pets-panel__task", text: section.task });
-      if (section.note) block.createDiv({ cls: "crisp-pets-panel__note", text: section.note });
-      if (!section.actions.length) continue;
-      const row = block.createDiv({ cls: "crisp-pets-panel__actions" });
-      for (const action of section.actions) {
-        const button = row.createEl("button", { cls: "crisp-pets-panel__button" });
-        setIcon(button.createSpan({ cls: "crisp-pets-panel__icon" }), action.icon);
-        button.createSpan({ text: action.label });
-        button.addEventListener("click", (event) => {
-          event.stopPropagation();
-          this.closePanel();
-          this.runCommand(action.command);
-        });
+    this.panelKey = structureKey(model);
+    this.liveTime = null;
+    this.liveBar = null;
+
+    panel.createDiv({ cls: "crisp-pets-panel__name", text: model.name });
+    if (model.focus) this.renderFocus(panel, model.focus);
+
+    if (model.stats.length) {
+      const stats = panel.createDiv({ cls: "crisp-pets-stats" });
+      for (const stat of model.stats) {
+        const tile = stats.createEl(stat.command ? "button" : "div", { cls: "crisp-pets-stat" });
+        tile.toggleClass("is-attention", !!stat.attention);
+        tile.createDiv({ cls: "crisp-pets-stat__value", text: stat.value });
+        tile.createDiv({ cls: "crisp-pets-stat__label", text: stat.label });
+        if (stat.command) this.bindCommand(tile, stat.command);
       }
     }
-    panel.createDiv({ cls: "crisp-pets-panel__hint", text: content.hint });
+
+    if (model.shortcuts.length) {
+      const row = panel.createDiv({ cls: "crisp-pets-shortcuts" });
+      for (const action of model.shortcuts) {
+        const button = row.createEl("button", { cls: "crisp-pets-shortcut" });
+        setIcon(button.createSpan({ cls: "crisp-pets-shortcut__icon" }), action.icon);
+        button.createSpan({ cls: "crisp-pets-shortcut__label", text: action.label });
+        this.bindCommand(button, action.command);
+      }
+    }
+
+    const hint = panel.createDiv({ cls: "crisp-pets-panel__hint" });
+    setIcon(hint.createSpan({ cls: "crisp-pets-panel__hint-icon" }), "hand");
+    hint.createSpan({ text: model.hint });
   }
+
+  private renderFocus(panel: HTMLElement, focus: FocusCard): void {
+    const card = panel.createDiv({ cls: `crisp-pets-focus is-${focus.tone}` });
+    const top = card.createDiv({ cls: "crisp-pets-focus__top" });
+    const heading = top.createDiv({ cls: "crisp-pets-focus__heading" });
+    heading.createSpan({ cls: "crisp-pets-focus__dot" });
+    heading.createSpan({ cls: "crisp-pets-focus__label", text: focus.label });
+    if (focus.secondary.length) {
+      const controls = top.createDiv({ cls: "crisp-pets-focus__controls" });
+      for (const action of focus.secondary) {
+        const button = controls.createEl("button", {
+          cls: "crisp-pets-icon-button",
+          attr: { "aria-label": action.label, "data-tooltip-position": "top" },
+        });
+        setIcon(button, action.icon);
+        this.bindCommand(button, action.command);
+      }
+    }
+    if (focus.time) this.liveTime = card.createDiv({ cls: "crisp-pets-focus__time", text: focus.time });
+    if (focus.progress !== undefined) {
+      const track = card.createDiv({ cls: "crisp-pets-focus__track" });
+      this.liveBar = track.createDiv({ cls: "crisp-pets-focus__bar" });
+      this.liveBar.style.width = `${focus.progress * 100}%`;
+    }
+    if (focus.task) card.createDiv({ cls: "crisp-pets-focus__task", text: focus.task });
+    if (focus.caption || focus.primary) {
+      const foot = card.createDiv({ cls: "crisp-pets-focus__foot" });
+      foot.createSpan({ cls: "crisp-pets-focus__caption", text: focus.caption ?? "" });
+      if (focus.primary) this.renderPrimary(foot, focus.primary);
+    }
+  }
+
+  private renderPrimary(parent: HTMLElement, action: PanelAction): void {
+    const button = parent.createEl("button", { cls: "crisp-pets-primary" });
+    setIcon(button.createSpan({ cls: "crisp-pets-primary__icon" }), action.icon);
+    button.createSpan({ text: action.label });
+    this.bindCommand(button, action.command);
+  }
+
+  private bindCommand(el: HTMLElement, command: string): void {
+    el.addEventListener("click", (event) => {
+      event.stopPropagation();
+      this.closePanel();
+      this.runCommand(command);
+    });
+  }
+}
+
+// Everything that changes the panel's layout; the ticking time and progress are left out.
+function structureKey(model: PanelModel): string {
+  const { focus, ...rest } = model;
+  return JSON.stringify({ ...rest, focus: focus && { ...focus, time: !!focus.time, progress: focus.progress !== undefined } });
 }

@@ -32,9 +32,17 @@
   bottom: calc(100% + 8px);
   right: 0;
   border: 1px solid var(--background-modifier-border);
-  background: var(--background-primary);
+  /* Themes for translucent windows can make --background-primary see-through; an opaque system colour
+     underneath keeps text over notes readable. */
+  background: linear-gradient(var(--background-primary), var(--background-primary)), Canvas;
   box-shadow: var(--shadow-s);
   color: var(--text-normal);
+  color-scheme: light;
+}
+
+.theme-dark .crisp-pets-bubble,
+.theme-dark .crisp-pets-panel {
+  color-scheme: dark;
 }
 
 .crisp-pets.is-left .crisp-pets-bubble,
@@ -58,7 +66,8 @@
 }
 
 .crisp-pets-bubble.is-clickable:hover {
-  background: var(--background-primary-alt);
+  background: linear-gradient(var(--background-modifier-hover), var(--background-modifier-hover)),
+    linear-gradient(var(--background-primary), var(--background-primary)), Canvas;
 }
 
 @keyframes crisp-pets-pop {
@@ -74,83 +83,293 @@
   }
 }
 
+
 .crisp-pets-panel {
-  width: 248px;
+  width: 272px;
   padding: 12px;
-  border-radius: 14px;
-  box-shadow: var(--shadow-l);
+  border-radius: 18px;
+  box-shadow:
+    0 14px 36px rgba(0, 0, 0, 0.14),
+    0 2px 6px rgba(0, 0, 0, 0.06);
   font-size: var(--font-ui-small);
+  transform-origin: bottom right;
+  animation: crisp-pets-panel-in 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.crisp-pets.is-left .crisp-pets-panel {
+  transform-origin: bottom left;
+}
+
+@keyframes crisp-pets-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crisp-pets-panel {
+    animation: none;
+  }
+}
+
+/* Obsidian styles every <button>; panel buttons start from a clean slate. */
+.crisp-pets-panel button {
+  height: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.crisp-pets-panel button:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
 }
 
 .crisp-pets-panel__name {
+  padding: 2px 4px 10px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
   font-weight: var(--font-semibold);
+  letter-spacing: 0.02em;
 }
 
-.crisp-pets-panel__section {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--background-modifier-border);
+/* Focus card: the one live thing in the panel. */
+.crisp-pets-focus {
+  --crisp-pets-tone: var(--text-faint);
+  padding: 12px 12px 10px;
+  border-radius: 12px;
+  background: var(--background-secondary);
 }
 
-.crisp-pets-panel__head {
+.crisp-pets-focus.is-focus {
+  --crisp-pets-tone: var(--color-red);
+}
+
+.crisp-pets-focus.is-break {
+  --crisp-pets-tone: var(--color-green);
+}
+
+.crisp-pets-focus__top {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  min-height: 24px;
 }
 
-.crisp-pets-panel__title {
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
-}
-
-.crisp-pets-panel__status {
-  color: var(--text-normal);
-  font-size: var(--font-ui-smaller);
-  font-variant-numeric: tabular-nums;
-}
-
-.crisp-pets-panel__task {
-  margin-top: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.crisp-pets-panel__note {
-  margin-top: 4px;
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
-}
-
-.crisp-pets-panel__actions {
+.crisp-pets-focus__heading {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
-  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
 }
 
-.crisp-pets-panel__button {
+.crisp-pets-focus__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--crisp-pets-tone);
+}
+
+.crisp-pets-focus__controls {
+  display: flex;
+  gap: 2px;
+  margin-right: -4px;
+}
+
+.crisp-pets-panel .crisp-pets-icon-button {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  width: 26px;
   height: 26px;
-  padding: 0 8px;
-  font-size: var(--font-ui-smaller);
+  border-radius: 50%;
+  color: var(--text-muted);
 }
 
-.crisp-pets-panel__icon {
-  display: inline-flex;
+.crisp-pets-panel .crisp-pets-icon-button:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
 }
 
-.crisp-pets-panel__icon svg {
+.crisp-pets-icon-button svg {
   width: 14px;
   height: 14px;
 }
 
+.crisp-pets-focus__time {
+  margin-top: 2px;
+  color: var(--text-normal);
+  font-size: 30px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.crisp-pets-focus__track {
+  height: 4px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+}
+
+.crisp-pets-focus__bar {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--crisp-pets-tone);
+  transition: width 1s linear;
+}
+
+.crisp-pets-focus__task {
+  margin-top: 8px;
+  overflow: hidden;
+  color: var(--text-normal);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crisp-pets-focus__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.crisp-pets-focus__caption {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+}
+
+.crisp-pets-panel .crisp-pets-primary {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 12px 0 10px;
+  border-radius: 999px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+}
+
+.crisp-pets-panel .crisp-pets-primary:hover {
+  background: var(--interactive-accent-hover);
+}
+
+.crisp-pets-primary__icon {
+  display: inline-flex;
+}
+
+.crisp-pets-primary__icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Pulse numbers: tap to open the dashboard or the memo panel. */
+.crisp-pets-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.crisp-pets-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 2px 7px;
+  border-radius: 10px;
+}
+
+.crisp-pets-panel button.crisp-pets-stat:hover {
+  background: var(--background-modifier-hover);
+}
+
+.crisp-pets-stat__value {
+  color: var(--text-normal);
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.crisp-pets-stat.is-attention .crisp-pets-stat__value {
+  color: var(--color-orange);
+}
+
+.crisp-pets-stat__label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+/* Shortcuts: icon over label, one row. */
+.crisp-pets-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.crisp-pets-panel .crisp-pets-shortcut {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 2px 6px;
+  border-radius: 10px;
+  color: var(--text-muted);
+}
+
+.crisp-pets-panel .crisp-pets-shortcut:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.crisp-pets-shortcut__icon {
+  display: inline-flex;
+}
+
+.crisp-pets-shortcut__icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.crisp-pets-shortcut__label {
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+}
+
 .crisp-pets-panel__hint {
-  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 6px;
   color: var(--text-faint);
   font-size: var(--font-ui-smaller);
+}
+
+.crisp-pets-panel__hint-icon {
+  display: inline-flex;
+}
+
+.crisp-pets-panel__hint-icon svg {
+  width: 12px;
+  height: 12px;
 }
 
 /* Settings: pet picker */
@@ -163,7 +382,6 @@
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 10px;
   padding-bottom: 0.75em;
-  border-bottom: 1px solid var(--background-modifier-border);
 }
 
 .crisp-pets-card {

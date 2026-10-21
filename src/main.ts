@@ -4,8 +4,8 @@ import { FOCUS_EVENT, focusReaction, focusingFromSnapshot } from "./focus";
 import { MAX_DROP_CHARS, PulseMemoApi, canCapture, memoRequest, normalizeDrop } from "./memo-drop";
 import { PetMood } from "./mood";
 import { PetOverlay } from "./overlay";
-import { PULSE_STATE_EVENT, PulseStateApi, PulseToday, canReadToday, memoLine, parseToday, pulseReactions, pulseStatus } from "./pulse";
-import { FocusSnapshot, focusSection, launcherSections } from "./panel-model";
+import { PULSE_STATE_EVENT, PulseStateApi, PulseToday, canReadToday, parseToday, pulseReactions } from "./pulse";
+import { FocusSnapshot, PanelModel, focusCard, pulseTiles, shortcuts } from "./panel-model";
 import { PetEntry, listPets, loadSpritesheet, readCodexSelection, resolvePetsFolder } from "./pets";
 import { PetSettingTab } from "./settings-tab";
 import { PetSprite } from "./sprite";
@@ -32,11 +32,11 @@ const DEFAULT_SETTINGS: PetSettings = {
 
 const DRAG_THRESHOLD_PX = 4;
 const FAILED_COOLDOWN_MS = 10000;
-const PANEL_REFRESH_MS = 15000;
+const PANEL_REFRESH_MS = 1000; // the countdown ticks; only time and progress are patched
 const PULSE_DEBOUNCE_MS = 800;
 const PULSE_POLL_MS = 10 * 60000; // catches the evening without any Pulse event
 const DAY_LINE_COOLDOWN_MS = 6 * 3600000;
-const DROP_HINT = "把文字拖到我身上，记成一条速记。";
+const DROP_HINT = "把文字拖给我，记成一条速记";
 
 export default class CrispPetsPlugin extends Plugin {
   options: PetSettings = { ...DEFAULT_SETTINGS };
@@ -307,16 +307,14 @@ export default class CrispPetsPlugin extends Plugin {
     (this.app as unknown as { commands: { executeCommandById(id: string): boolean } }).commands.executeCommandById(id);
   }
 
-  private panelContent() {
+  private panelContent(): PanelModel {
     const has = (id: string) => this.hasCommand(id);
-    const focus = focusSection(this.focusSnapshot() as FocusSnapshot | null, has);
     return {
       name: this.petName,
-      sections: [
-        ...(focus ? [focus] : []),
-        ...launcherSections(has, this.pulseToday ? { status: pulseStatus(this.pulseToday), note: memoLine(this.pulseToday) } : {}),
-      ],
-      hint: canCapture(this.pulseApi()) ? DROP_HINT : "装上 Crisp Pulse 后，可以把文字拖给我记成速记。",
+      focus: focusCard(this.focusSnapshot() as FocusSnapshot | null, has),
+      stats: pulseTiles(this.pulseToday, has),
+      shortcuts: shortcuts(has),
+      hint: canCapture(this.pulseApi()) ? DROP_HINT : "装上 Crisp Pulse，就能把文字拖给我记速记",
     };
   }
 

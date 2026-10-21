@@ -82,14 +82,3 @@ export function pulseReactions(
   }
   return out;
 }
-
-export function pulseStatus(today: PulseToday): string {
-  const score = Math.round(today.score);
-  return today.streak > 0 ? `今天 ${score} 分 · 连续 ${today.streak} 天` : `今天 ${score} 分`;
-}
-
-export function memoLine(today: PulseToday): string | undefined {
-  if (!today.memos || today.memos.today === 0) return undefined;
-  const { today: count, pending } = today.memos;
-  return pending > 0 ? `今天 ${count} 条速记，${pending} 条还没去处` : `今天 ${count} 条速记，都有去处了`;
-}

@@ -17,7 +17,7 @@ await esbuild.build({
   outfile: path.join(outDir, "pulse.mjs"),
   logLevel: "error",
 });
-const { canReadToday, parseToday, pulseReactions, isStreakMilestone, pulseStatus, memoLine } = await import(
+const { canReadToday, parseToday, pulseReactions, isStreakMilestone } = await import(
   pathToFileURL(path.join(outDir, "pulse.mjs")).href
 );
 
@@ -71,13 +71,4 @@ test("in the evening, pending memos are mentioned once a day", () => {
   assert.deepEqual(pulseReactions(next, next, 21, "2026-10-21"), []);
   assert.deepEqual(pulseReactions(next, day({ memos: { today: 5, pending: 0 } }), 21, null), []);
   assert.deepEqual(pulseReactions(next, day({ memos: null }), 21, null), []);
-});
-
-test("panel wording", () => {
-  assert.equal(pulseStatus(day({ score: 12.6, streak: 4 })), "今天 13 分 · 连续 4 天");
-  assert.equal(pulseStatus(day({ streak: 0 })), "今天 0 分");
-  assert.equal(memoLine(day()), undefined);
-  assert.equal(memoLine(day({ memos: null })), undefined);
-  assert.equal(memoLine(day({ memos: { today: 4, pending: 1 } })), "今天 4 条速记，1 条还没去处");
-  assert.equal(memoLine(day({ memos: { today: 2, pending: 0 } })), "今天 2 条速记，都有去处了");
 });

@@ -21,7 +21,7 @@ async function load(name) {
   return import(pathToFileURL(path.join(outDir, `${name}.mjs`)).href);
 }
 const { BubbleGate, MIN_GAP_MS, bubbleDuration } = await load("bubble-gate");
-const { focusSection, launcherSections } = await load("panel-model");
+const { focusCard, pulseTiles, shortcuts, clock } = await load("panel-model");
 const { memoRequest, memoSourceId, normalizeDrop, canCapture } = await load("memo-drop");
 const { PetMood } = await load("mood");
 
@@ -45,36 +45,69 @@ test("bubble stays longer for longer text, within limits", () => {
 });
 
 test("panel: idle shows today's pomodoros and the start button that fits the licence", () => {
-  const licensed = focusSection({ status: "idle", todayCount: 2, goal: 8, entitled: true }, all);
-  assert.equal(licensed.status, "今天 2 个番茄 · 目标 8");
-  assert.deepEqual(licensed.actions.map((a) => a.command), ["crisp-focus:start-pomodoro"]);
-  const free = focusSection({ status: "idle", todayCount: 0, entitled: false }, all);
-  assert.deepEqual(free.actions.map((a) => a.command), ["crisp-focus:start-focus-session-25"]);
+  const licensed = focusCard({ status: "idle", todayCount: 2, goal: 8, entitled: true }, all);
+  assert.equal(licensed.tone, "idle");
+  assert.equal(licensed.caption, "今天 2 / 8 个番茄");
+  assert.equal(licensed.primary.command, "crisp-focus:start-pomodoro");
+  assert.equal(licensed.time, undefined);
+  const free = focusCard({ status: "idle", todayCount: 0, entitled: false }, all);
+  assert.equal(free.primary.command, "crisp-focus:start-focus-session-25");
+  assert.equal(free.caption, "今天 0 个番茄");
 });
 
-test("panel: running focus shows time left and the task; a break offers skipping", () => {
-  const running = focusSection(
-    { status: "running", kind: "focus", remainingMs: 11 * 60000 + 1, task: { title: " 写周报 " } },
+test("panel: a running session shows a countdown, progress, the task and pause/stop", () => {
+  const running = focusCard(
+    { status: "running", kind: "focus", remainingMs: 11 * 60000 + 30500, plannedMs: 25 * 60000, task: { title: " 写周报 " } },
     all,
   );
-  assert.equal(running.status, "专注中 · 还剩 12 分钟");
+  assert.equal(running.tone, "focus");
+  assert.equal(running.time, "11:31");
+  assert.ok(Math.abs(running.progress - (1 - (11 * 60000 + 30500) / (25 * 60000))) < 1e-9);
   assert.equal(running.task, "写周报");
-  assert.deepEqual(running.actions.map((a) => a.label), ["暂停", "结束"]);
-  const rest = focusSection({ status: "running", kind: "break", remainingMs: 30000 }, all);
-  assert.equal(rest.status, "休息中 · 还剩 1 分钟");
-  assert.deepEqual(rest.actions.map((a) => a.label), ["跳过休息"]);
-  const paused = focusSection({ status: "paused", kind: "focus", remainingMs: 60000 }, all);
-  assert.deepEqual(paused.actions.map((a) => a.label), ["继续", "结束"]);
-  const waiting = focusSection({ status: "idle", waiting: true, round: 2 }, all);
-  assert.equal(waiting.status, "第 2 个番茄待开始");
+  assert.equal(running.primary, undefined);
+  assert.deepEqual(running.secondary.map((a) => a.label), ["暂停", "结束"]);
 });
 
-test("panel: no Focus means no section; missing commands drop their buttons", () => {
-  assert.equal(focusSection(null, all), null);
-  assert.deepEqual(focusSection({ status: "idle", entitled: true }, none).actions, []);
-  assert.deepEqual(launcherSections(none), []);
-  const pulseOnly = launcherSections((id) => id.startsWith("crisp-pulse:"));
-  assert.deepEqual(pulseOnly.map((s) => s.title), ["Pulse"]);
+test("panel: break offers skipping; paused offers resume; between rounds offers the next one", () => {
+  const rest = focusCard({ status: "running", kind: "break", remainingMs: 30000, plannedMs: 300000, todayCount: 3, goal: 8 }, all);
+  assert.equal(rest.tone, "break");
+  assert.equal(rest.primary.label, "跳过休息");
+  assert.deepEqual(rest.secondary, []);
+  assert.equal(rest.caption, "今天 3 / 8 个番茄");
+  const paused = focusCard({ status: "paused", kind: "focus", remainingMs: 60000 }, all);
+  assert.equal(paused.tone, "paused");
+  assert.deepEqual(paused.secondary.map((a) => a.label), ["继续", "结束"]);
+  assert.equal(paused.progress, undefined);
+  const waiting = focusCard({ status: "idle", waiting: true, round: 2 }, all);
+  assert.equal(waiting.label, "第 2 个番茄");
+  assert.equal(waiting.primary.label, "开始下一个");
+});
+
+test("panel: no Focus means no card; missing commands drop their buttons", () => {
+  assert.equal(focusCard(null, all), null);
+  const bare = focusCard({ status: "running", kind: "focus", remainingMs: 1000 }, none);
+  assert.equal(bare.primary, undefined);
+  assert.deepEqual(bare.secondary, []);
+  assert.deepEqual(shortcuts(none), []);
+  assert.deepEqual(shortcuts((id) => id.startsWith("crisp-tempo:")).map((a) => a.label), ["任务", "新建任务"]);
+});
+
+test("panel: Pulse tiles open the dashboard or memos, and flag waiting memos", () => {
+  assert.deepEqual(pulseTiles(null, all), []);
+  const tiles = pulseTiles({ date: "d", score: 12.6, streak: 4, active: true, memos: { today: 3, pending: 2 } }, all);
+  assert.deepEqual(tiles.map((t) => [t.value, t.label]), [["13", "今日贡献"], ["4", "连续天数"], ["2", "待处理速记"]]);
+  assert.equal(tiles[2].command, "crisp-pulse:open-memo-view");
+  assert.equal(tiles[2].attention, true);
+  const unread = pulseTiles({ date: "d", score: 0, streak: 0, active: false, memos: null }, none);
+  assert.equal(unread[2].value, "—");
+  assert.equal(unread[2].attention, false);
+  assert.equal(unread[0].command, undefined);
+});
+
+test("clock rounds up to whole seconds and never goes negative", () => {
+  assert.equal(clock(25 * 60000), "25:00");
+  assert.equal(clock(59001), "01:00");
+  assert.equal(clock(-5), "00:00");
 });
 
 test("memo drop: same text from the same note keeps one source id; ids fit Pulse's pattern", () => {
