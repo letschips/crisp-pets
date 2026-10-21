@@ -1,0 +1,10 @@
+{
+  "id": "crisp-pet",
+  "name": "Crisp Pet",
+  "version": "0.1.0",
+  "minAppVersion": "1.6.0",
+  "description": "Shows a Codex-compatible animated pet that reacts to typing, reading and tasks.",
+  "author": "letschips",
+  "authorUrl": "https://github.com/letschips",
+  "isDesktopOnly": true
+}
