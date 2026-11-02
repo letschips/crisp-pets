@@ -46,6 +46,9 @@ export class PetSettingTab extends PluginSettingTab {
     const plugin = this.plugin;
     containerEl.empty();
 
+    const brandHeader = containerEl.createDiv({ cls: "crisp-brand-header" });
+    brandHeader.createEl("h2", { text: "Crisp Pets" });
+    containerEl.createEl("p", { text: "写笔记，也有小伙伴", cls: "crisp-brand-slogan" });
     this.renderLicense(containerEl);
     new Setting(containerEl).setName("宠物").setHeading();
     new Setting(containerEl).setName("显示宠物").addToggle((toggle) =>
