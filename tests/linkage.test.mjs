@@ -1,7 +1,7 @@
 // Bubble pacing, panel content from the Focus snapshot, and memo drop requests.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -9,6 +9,8 @@ import esbuild from "esbuild";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = mkdtempSync(path.join(tmpdir(), "crisp-pets-linkage-"));
+const obsidianStub = path.join(outDir, "obsidian-stub.mjs");
+writeFileSync(obsidianStub, "export function setIcon(el, icon) { el.icon = icon; }\n");
 async function load(name) {
   await esbuild.build({
     entryPoints: [path.join(root, `src/${name}.ts`)],
@@ -17,6 +19,7 @@ async function load(name) {
     platform: "node",
     outfile: path.join(outDir, `${name}.mjs`),
     logLevel: "error",
+    alias: { obsidian: obsidianStub },
   });
   return import(pathToFileURL(path.join(outDir, `${name}.mjs`)).href);
 }
@@ -24,6 +27,7 @@ const { BubbleGate, MIN_GAP_MS, bubbleDuration } = await load("bubble-gate");
 const { focusCard, pulseTiles, shortcuts, clock } = await load("panel-model");
 const { memoRequest, memoSourceId, normalizeDrop, canCapture } = await load("memo-drop");
 const { PetMood } = await load("mood");
+const { PetOverlay } = await load("overlay");
 
 const all = () => true;
 const none = () => false;
@@ -141,4 +145,136 @@ test("pet waits while text hovers over it", () => {
   assert.equal(mood.pose(0).state, "waiting");
   mood.setExpecting(false);
   assert.equal(mood.pose(0).state, "running");
+});
+
+function fakeNode(tag = "div", opts = {}, ownerDocument = null) {
+  const classes = new Set((opts.cls ?? "").split(/\s+/).filter(Boolean));
+  const attrs = { ...(opts.attr ?? {}) };
+  const listeners = new Map();
+  let shown = true;
+  const node = {
+    tag: tag.toLowerCase(),
+    text: opts.text ?? "",
+    icon: null,
+    style: {},
+    offsetHeight: 200,
+    children: [],
+    ownerDocument,
+    win: { innerWidth: 1200, innerHeight: 900 },
+    createEl(childTag, childOpts = {}) {
+      const child = fakeNode(childTag, childOpts, node.ownerDocument);
+      node.children.push(child);
+      return child;
+    },
+    createDiv(childOpts = {}) {
+      return node.createEl("div", childOpts);
+    },
+    createSpan(childOpts = {}) {
+      return node.createEl("span", childOpts);
+    },
+    empty() {
+      node.children.length = 0;
+      node.text = "";
+    },
+    setText(t) {
+      node.text = t;
+    },
+    toggleClass(cls, on) {
+      if (on) classes.add(cls);
+      else classes.delete(cls);
+    },
+    hasClass(cls) {
+      return classes.has(cls);
+    },
+    setAttrs(next) {
+      for (const [k, v] of Object.entries(next)) {
+        if (v === null) delete attrs[k];
+        else attrs[k] = v;
+      }
+    },
+    getAttr(k) {
+      return attrs[k];
+    },
+    show() {
+      shown = true;
+    },
+    hide() {
+      shown = false;
+    },
+    isShown() {
+      return shown;
+    },
+    getBoundingClientRect() {
+      return { left: 900, right: 1000, top: 700, bottom: 800, width: 100, height: 100 };
+    },
+    addEventListener(type, fn) {
+      listeners.set(type, fn);
+    },
+    click(event = { stopPropagation() {} }) {
+      listeners.get("click")?.(event);
+    },
+    focus() {
+      node.focused = true;
+    },
+    findAll(pred, out = []) {
+      for (const c of node.children) {
+        if (pred(c)) out.push(c);
+        c.findAll(pred, out);
+      }
+      return out;
+    },
+    querySelector(sel) {
+      if (sel === "button") return node.findAll((c) => c.tag === "button")[0] ?? null;
+      if (sel.startsWith(".")) return node.findAll((c) => c.hasClass(sel.slice(1)))[0] ?? null;
+      return null;
+    },
+  };
+  return node;
+}
+
+test("panel header renders a settings button that closes the panel, clears tooltips, and opens plugin settings", () => {
+  let removedTooltips = 0;
+  const ownerDocument = {
+    body: {
+      querySelectorAll(sel) {
+        return sel === ".tooltip" ? [{ remove: () => removedTooltips++ }] : [];
+      },
+    },
+  };
+  const root = fakeNode("div", { cls: "crisp-pets" }, ownerDocument);
+  const commands = [];
+  let settingsOpened = 0;
+  const overlay = new PetOverlay(
+    root,
+    (id) => commands.push(id),
+    () => settingsOpened++,
+  );
+  overlay.openPanel(
+    {
+      name: "小星黄",
+      focus: null,
+      stats: [],
+      shortcuts: [{ label: "记速记", icon: "pencil-line", command: "crisp-pulse:quick-memo" }],
+      hint: "把文字拖给我，记成一条速记",
+    },
+    true,
+  );
+  assert.equal(overlay.panelOpen, true);
+  const head = root.querySelector(".crisp-pets-panel__head");
+  assert.ok(head, "panel must have a header container");
+  assert.equal(head.querySelector(".crisp-pets-panel__name")?.text, "小星黄");
+  const settingsBtn = head.querySelector("button");
+  assert.ok(settingsBtn, "header must contain a settings button");
+  assert.equal(settingsBtn.getAttr("aria-label"), "设置");
+  assert.equal(settingsBtn.getAttr("data-tooltip-position"), "top");
+  assert.equal(settingsBtn.icon, "settings");
+  assert.equal(settingsBtn.focused, true, "keyboard open focuses the first button in the panel");
+
+  let stopped = false;
+  settingsBtn.click({ stopPropagation: () => (stopped = true) });
+  assert.equal(stopped, true);
+  assert.equal(overlay.panelOpen, false);
+  assert.equal(settingsOpened, 1);
+  assert.deepEqual(commands, []);
+  assert.equal(removedTooltips, 1, "closing the panel clears any lingering hover tooltip");
 });

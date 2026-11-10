@@ -159,12 +159,24 @@ body:has(.crisp-pets-sprite.is-dragging) .tooltip {
   outline-offset: 1px;
 }
 
+.crisp-pets-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: -2px -2px 6px 0;
+  padding-left: 4px;
+}
+
 .crisp-pets-panel__name {
-  padding: 2px 4px 10px;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
   font-weight: var(--font-semibold);
   letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Focus card: the one live thing in the panel. */
@@ -213,6 +225,7 @@ body:has(.crisp-pets-sprite.is-dragging) .tooltip {
 
 .crisp-pets-panel .crisp-pets-icon-button {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   width: 26px;

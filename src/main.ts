@@ -252,7 +252,11 @@ export default class CrispPetsPlugin extends Plugin {
       cls: "crisp-pets-sprite",
       attr: { "aria-label": this.petName, role: "button", tabindex: "0", "aria-haspopup": "dialog" },
     });
-    this.overlay = new PetOverlay(this.el, (id) => this.runCommand(id));
+    this.overlay = new PetOverlay(
+      this.el,
+      (id) => this.runCommand(id),
+      () => this.openSettings(),
+    );
     this.sprite = new PetSprite(this.spriteEl, sheet, () => this.mood!.pose(Date.now()), () => this.reducedMotion.matches);
     this.sprite.setScale(this.options.size / 100);
     this.applyPosition();

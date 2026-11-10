@@ -16,6 +16,7 @@ export class PetOverlay {
   constructor(
     private readonly root: HTMLElement,
     private readonly runCommand: (id: string) => void,
+    private readonly openSettings: () => void = () => {},
   ) {
     this.bubbleEl = root.createDiv({ cls: "crisp-pets-bubble", attr: { role: "status", "aria-live": "polite" } });
     this.panelEl = root.createDiv({ cls: "crisp-pets-panel", attr: { role: "dialog" } });
@@ -107,7 +108,10 @@ export class PetOverlay {
   }
 
   closePanel(): void {
+    if (!this.panelOpen) return;
     this.panelEl.hide();
+    const doc = this.root.ownerDocument ?? (typeof document !== "undefined" ? document : null);
+    doc?.body?.querySelectorAll(".tooltip").forEach((tip) => tip.remove());
   }
 
   contains(target: EventTarget | null): boolean {
@@ -125,7 +129,14 @@ export class PetOverlay {
     this.liveTime = null;
     this.liveBar = null;
 
-    panel.createDiv({ cls: "crisp-pets-panel__name", text: model.name });
+    const head = panel.createDiv({ cls: "crisp-pets-panel__head" });
+    head.createDiv({ cls: "crisp-pets-panel__name", text: model.name });
+    const settingsButton = head.createEl("button", {
+      cls: "crisp-pets-icon-button",
+      attr: { "aria-label": "设置", "data-tooltip-position": "top" },
+    });
+    setIcon(settingsButton, "settings");
+    this.bindAction(settingsButton, () => this.openSettings());
     if (model.focus) this.renderFocus(panel, model.focus);
 
     if (model.stats.length) {
@@ -193,10 +204,14 @@ export class PetOverlay {
   }
 
   private bindCommand(el: HTMLElement, command: string): void {
+    this.bindAction(el, () => this.runCommand(command));
+  }
+
+  private bindAction(el: HTMLElement, action: () => void): void {
     el.addEventListener("click", (event) => {
       event.stopPropagation();
       this.closePanel();
-      this.runCommand(command);
+      action();
     });
   }
 }
