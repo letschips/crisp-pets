@@ -3,6 +3,7 @@ import { BubbleGate } from "./bubble-gate";
 import { FOCUS_EVENT, focusReaction, focusingFromSnapshot } from "./focus";
 import { discoverVaultCrispLicenses, verifyLicenseCode } from "./license";
 import { ActivationOutcome, LicenseController, LicenseResult } from "./license-controller";
+import { petsEntitled } from "./entitlement";
 import { DragSession, MAX_DROP_CHARS, PulseMemoApi, canCapture, memoRequest, normalizeDrop } from "./memo-drop";
 import { displayedOffset } from "./layout";
 import { PetMood } from "./mood";
@@ -22,6 +23,11 @@ const PULSE_POLL_MS = 10 * 60000; // catches the evening without any Pulse event
 const DAY_LINE_COOLDOWN_MS = 6 * 3600000;
 const DROP_HINT = "把文字拖给我，记成一条速记";
 const PLUGIN_ID = "crisp-pets";
+
+async function checkPetsLicense(code: string, online: boolean): Promise<LicenseResult> {
+  const result = await verifyLicenseCode(code, PLUGIN_ID, online ? undefined : { online: false });
+  return { valid: result.valid, payload: result.payload, reason: result.reason };
+}
 
 export default class CrispPetsPlugin extends Plugin {
   options: PetSettings = { ...DEFAULT_SETTINGS };
@@ -51,7 +57,8 @@ export default class CrispPetsPlugin extends Plugin {
   // Free: the pet itself (look, typing, reading, dragging, task jumps). Licensed: the panel, dropping text
   // into Pulse memos, Focus and Pulse linkage and their bubbles.
   private readonly licenseController = new LicenseController({
-    verify: (code, online) => this.checkLicense(code, online),
+    // A module function, not a method: overriding a method on the plugin cannot feed it a fake result.
+    verify: checkPetsLicense,
     discover: () => discoverVaultCrispLicenses(this.app, PLUGIN_ID),
     getCode: () => this.options.licenseCode,
     persistCode: async (code) => {
@@ -59,15 +66,15 @@ export default class CrispPetsPlugin extends Plugin {
       return this.saveOptionsChecked();
     },
     onChange: () => this.onLicenseChange(),
-  });
+  }, this);
 
   get license(): LicenseResult {
     return this.licenseController.state;
   }
 
-  // Also applies the expiry date at the moment of use.
+  // Also applies the expiry date at the moment of use. For display; gates call petsEntitled(this).
   get licensed(): boolean {
-    return this.licenseController.licensed;
+    return petsEntitled(this);
   }
 
   async onload(): Promise<void> {
@@ -188,18 +195,13 @@ export default class CrispPetsPlugin extends Plugin {
     return this.licenseController.clear();
   }
 
-  private async checkLicense(code: string, online: boolean): Promise<LicenseResult> {
-    const result = await verifyLicenseCode(code, PLUGIN_ID, online ? undefined : { online: false });
-    return { valid: result.valid, payload: result.payload, reason: result.reason };
-  }
-
   private onLicenseChange(): void {
     if (this.disposed) return;
-    if (!this.licensed) {
+    if (!petsEntitled(this)) {
       this.overlay?.closePanel();
       this.pulseToday = null;
     }
-    this.nudge((mood) => mood.setFocusing(this.licensed && focusingFromSnapshot(this.focusSnapshot())));
+    this.nudge((mood) => mood.setFocusing(petsEntitled(this) && focusingFromSnapshot(this.focusSnapshot())));
     void this.refreshPulse();
     this.settingTab?.display();
   }
@@ -269,7 +271,7 @@ export default class CrispPetsPlugin extends Plugin {
       this.togglePanel(true);
     });
     this.syncReading();
-    this.mood.setFocusing(this.licensed && focusingFromSnapshot(this.focusSnapshot()));
+    this.mood.setFocusing(petsEntitled(this) && focusingFromSnapshot(this.focusSnapshot()));
     this.mood.trigger("waving", Date.now());
     this.sprite.start();
     void this.refreshPulse();
@@ -354,7 +356,7 @@ export default class CrispPetsPlugin extends Plugin {
   }
 
   private onFocusEvent(event: unknown): void {
-    if (!this.licensed) return;
+    if (!petsEntitled(this)) return;
     const reaction = focusReaction(event);
     if (reaction) {
       this.nudge((mood, now) => {
@@ -414,7 +416,7 @@ export default class CrispPetsPlugin extends Plugin {
     const token = ++this.pulseToken;
     const pulse = this.pluginInstance("crisp-pulse") as PulseStateApi | undefined;
     let next: PulseToday | null = null;
-    if (this.licensed && canReadToday(pulse)) {
+    if (petsEntitled(this) && canReadToday(pulse)) {
       try {
         next = parseToday(await pulse.getTodaySnapshot());
       } catch {
@@ -460,7 +462,7 @@ export default class CrispPetsPlugin extends Plugin {
   // From the keyboard, focus moves into the panel; Escape brings it back to the pet.
   private togglePanel(fromKeyboard = false): void {
     if (!this.overlay) return;
-    if (!this.licensed) {
+    if (!petsEntitled(this)) {
       this.lockedHint("激活 Crisp 后，点我能打开面板");
       return;
     }
@@ -513,7 +515,7 @@ export default class CrispPetsPlugin extends Plugin {
   // Dropped text goes to Pulse as a memo quoting it. When it matches the active editor's selection,
   // the memo also links back to that note.
   private async captureDrop(raw: string): Promise<void> {
-    if (!this.licensed) {
+    if (!petsEntitled(this)) {
       this.dragSession.end();
       this.lockedHint("激活 Crisp 后，可以把文字拖给我记速记");
       return;

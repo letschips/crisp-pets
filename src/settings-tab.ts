@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { PetEntry, defaultPetsFolder, loadSpritesheet, loadThumbnail, resolvePetsFolder } from "./pets";
 import { matchesQuery, orderPets, pickerLayout } from "./picker";
 import { PetSprite } from "./sprite";
+import { petsEntitled } from "./entitlement";
 
 const THUMB_SCALE = 0.5;
 const COMPACT_THUMB_PX = 64;
@@ -168,7 +169,7 @@ export class PetSettingTab extends PluginSettingTab {
     const plugin = this.plugin;
     const license = plugin.license;
     const status = new Setting(containerEl).setName("激活状态");
-    if (plugin.licensed) {
+    if (petsEntitled(plugin)) {
       const payload = license.payload;
       const user = payload?.userName || "Crisp 用户";
       const expiry = payload?.expiresAt ? `到期时间：${String(payload.expiresAt).split("T")[0]}` : "永久授权";

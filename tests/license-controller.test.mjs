@@ -35,6 +35,7 @@ function host({ stored = "", answers = {}, discover = async () => [], persistOk 
     calls: [],
     persists: 0,
     changes: 0,
+    persistOk,
   };
   h.controller = new LicenseController({
     verify: async (code, online) => {
@@ -46,8 +47,8 @@ function host({ stored = "", answers = {}, discover = async () => [], persistOk 
     getCode: () => h.stored,
     persistCode: async (code) => {
       h.persists++;
-      if (persistOk) h.stored = code;
-      return persistOk;
+      if (h.persistOk) h.stored = code;
+      return h.persistOk;
     },
     onChange: () => h.changes++,
     now,
@@ -214,7 +215,7 @@ test("an inherited code that fails to save is flagged and can be saved again", a
   assert.equal(h.controller.unsaved, true);
   assert.equal(await h.controller.retrySave(), false);
   assert.equal(h.controller.unsaved, true);
-  h.controller.deps.persistCode = async (code) => ((h.stored = code), true);
+  h.persistOk = true; // the disk accepts writes again
   assert.equal(await h.controller.retrySave(), true);
   assert.equal(h.controller.unsaved, false);
   assert.equal(h.stored, "A");
@@ -227,4 +228,36 @@ test("a manual activation that fails to save shares the unsaved flag; clearing r
   assert.equal(h.controller.unsaved, true);
   await h.controller.clear();
   assert.equal(h.controller.unsaved, false);
+});
+
+// ---- Hardening: the gate cannot be opened from the console ----
+
+test("writing state on the controller does not unlock it", () => {
+  const h = host();
+  h.controller.state = { valid: true, payload: { expiresAt: "2999-01-01T00:00:00.000Z" } };
+  assert.equal(h.controller.licensed, false);
+});
+
+test("replacing the controller's deps does not change what it verifies with", async () => {
+  const h = host();
+  h.controller.deps = { ...h.controller.deps, verify: async () => OK() };
+  const outcome = await h.controller.activate("FORGED");
+  assert.equal(outcome.result.valid, false);
+  assert.equal(h.controller.licensed, false);
+});
+
+test("a second controller built for the same owner cannot open that owner's gate", async () => {
+  const owner = {};
+  const real = new LicenseController({
+    verify: async () => ({ valid: false }), discover: async () => [], getCode: () => "",
+    persistCode: async () => true, onChange() {},
+  }, owner);
+  const Fake = real.constructor;
+  const fake = new Fake({
+    verify: async () => OK(), discover: async () => [], getCode: () => "FORGED",
+    persistCode: async () => true, onChange() {},
+  }, owner);
+  await fake.loadLocal();
+  assert.equal(real.licensed, false);
+  assert.equal(fake.licensed, false);
 });
