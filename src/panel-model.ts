@@ -102,10 +102,11 @@ export function focusCard(snapshot: FocusSnapshot | null, has: (command: string)
     tone: "idle",
     label: "专注",
     caption: today,
-    // Pomodoro needs a Focus licence; a single 25-minute session is free.
+    // Focus sessions and pomodoros both need a Focus licence (Focus 1.9.2+); unlicensed users
+    // get the pomodoro panel, which leads to activation.
     primary: snapshot.entitled
       ? action("开始番茄", "play", "crisp-focus:start-pomodoro")
-      : action("专注 25 分钟", "play", "crisp-focus:start-focus-session-25"),
+      : action("打开番茄钟", "timer", "crisp-focus:open-pomodoro"),
     secondary: [],
   };
 }

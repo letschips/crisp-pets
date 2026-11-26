@@ -55,7 +55,7 @@ test("panel: idle shows today's pomodoros and the start button that fits the lic
   assert.equal(licensed.primary.command, "crisp-focus:start-pomodoro");
   assert.equal(licensed.time, undefined);
   const free = focusCard({ status: "idle", todayCount: 0, entitled: false }, all);
-  assert.equal(free.primary.command, "crisp-focus:start-focus-session-25");
+  assert.equal(free.primary.command, "crisp-focus:open-pomodoro", "unlicensed: no start button the Focus gate would refuse");
   assert.equal(free.caption, "今天 0 个番茄");
 });
 
