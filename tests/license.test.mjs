@@ -264,3 +264,20 @@ test("a verifier that accepts everything at load is not trusted, so no code pass
   assert.equal((await lib.verifyLicenseCode(forged(), "crisp-pets", env({ online: false }))).valid, false);
   assert.equal((await lib.verifyLicenseCode(CODE, "crisp-pets", env({ online: false }))).valid, false);
 });
+
+// Crisp Pulse keeps its code under `settings`; Pets and Days keep theirs under `options`.
+test("inheritance scan reads Pulse's nested settings on disk and the options of a loaded sibling", async () => {
+  const B = makeCode({ licenseId: "TEST-B" });
+  const files = { ".obsidian/plugins/crisp-pulse/data.json": JSON.stringify({ settings: { licenseCode: CODE } }) };
+  const app = {
+    plugins: { plugins: {} },
+    vault: { configDir: ".obsidian", adapter: {
+      exists: async (p) => p === ".obsidian/plugins" || p in files,
+      list: async () => ({ folders: [".obsidian/plugins/crisp-pulse"], files: [] }),
+      read: async (p) => files[p],
+    } },
+  };
+  assert.deepEqual(await discoverVaultCrispLicenses(app, "crisp-pets"), [CODE]);
+  app.plugins.plugins["crisp-focus"] = { options: { licenseCode: B } };
+  assert.deepEqual(await discoverVaultCrispLicenses(app, "crisp-pets"), [B, CODE]);
+});
